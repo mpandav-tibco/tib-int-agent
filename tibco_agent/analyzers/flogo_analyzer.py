@@ -7,6 +7,9 @@ from .flogo_rules import (
     FlogoContext, FlogoFlow, FlogoTask,
     HttpSslRule, HttpTimeoutRule, MissingErrorHandlerRule,
     SelectStarRule, SensitiveLogRule, SubflowDepthRule,
+    AppDescriptionRule, FlowNamingConventionRule, DedicatedConnectorRule,
+    SeparationOfConcernsRule, ApiVersioningRule,
+    detect_technologies, detect_pattern, extract_endpoints,
 )
 
 
@@ -32,9 +35,35 @@ def _parse_flow(resource: dict) -> FlogoFlow:
     )
 
 
+def _build_overview(app: dict, flows: list[FlogoFlow]) -> dict:
+    triggers = app.get("triggers", [])
+    imports  = app.get("imports", [])
+
+    # Trigger port (REST)
+    trigger_port = None
+    for t in triggers:
+        port = t.get("settings", {}).get("port")
+        if port:
+            trigger_port = port
+            break
+
+    return {
+        "name":         app.get("name", ""),
+        "description":  app.get("description", ""),
+        "version":      app.get("version", ""),
+        "app_model":    app.get("appModel", ""),
+        "pattern":      detect_pattern(triggers, flows),
+        "trigger_port": trigger_port,
+        "flow_count":   len(flows),
+        "endpoints":    extract_endpoints(triggers),
+        "technologies": detect_technologies(imports),
+    }
+
+
 class FlogoAnalyzer(Analyzer):
     """
     Analyzes TIBCO Flogo .flogo application files against a pluggable rule set.
+    Produces a full architect review: overview, tech stack, strengths, and issues.
 
     Add custom rules:
         analyzer = FlogoAnalyzer()
@@ -45,12 +74,22 @@ class FlogoAnalyzer(Analyzer):
 
     def _default_rules(self) -> list[Rule]:
         return [
+            # Issue rules
             MissingErrorHandlerRule(),
             HttpTimeoutRule(),
             HttpSslRule(),
             SelectStarRule(),
             SensitiveLogRule(),
             SubflowDepthRule(),
+        ]
+
+    def _positive_rules(self) -> list[Rule]:
+        return [
+            AppDescriptionRule(),
+            FlowNamingConventionRule(),
+            DedicatedConnectorRule(),
+            SeparationOfConcernsRule(),
+            ApiVersioningRule(),
         ]
 
     def analyze(self, content: str, source: str = "unknown.flogo") -> AnalysisReport:
@@ -76,12 +115,33 @@ class FlogoAnalyzer(Analyzer):
             raw=app,
         )
 
-        report = AnalysisReport(source=source, product="flogo")
-        report.observations.append(
-            f"App: **{ctx.app_name}** — {len(ctx.triggers)} trigger(s), {len(ctx.flows)} flow(s)"
+        report = AnalysisReport(
+            source=source,
+            product="flogo",
+            overview=_build_overview(app, flows),
         )
 
+        # Issue findings
         for rule in self._rules:
             report.findings.extend(rule.check(ctx))
+
+        # Positive / strength findings
+        for rule in self._positive_rules():
+            report.positives.extend(rule.check(ctx))
+
+        # Security note on trigger authentication
+        for trigger in ctx.triggers:
+            auth = trigger.get("settings", {}).get("authenticationType", "None")
+            secure = trigger.get("settings", {}).get("secureConnection", False)
+            if auth == "None":
+                report.observations.append(
+                    f"Trigger `{trigger.get('name', trigger.get('id', ''))}` has no authentication "
+                    "(authenticationType=None). Consider adding Basic/OAuth2 auth before exposing to external clients."
+                )
+            if not secure:
+                report.observations.append(
+                    f"Trigger `{trigger.get('name', trigger.get('id', ''))}` runs over plain HTTP "
+                    "(secureConnection=false). Enable TLS for production deployments."
+                )
 
         return report

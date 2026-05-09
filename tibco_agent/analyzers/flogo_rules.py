@@ -52,6 +52,67 @@ def _matches(ref: str, known: frozenset[str]) -> bool:
     return any(ref == k or ref.startswith(k) for k in known)
 
 
+# ── Technology detection ─────────────────────────────────────────────────────
+
+_TECH_PATTERNS: list[tuple[str, str]] = [
+    ("mpandav-tibco/flogo-extensions/vectordb", "Weaviate Vector DB (custom flogo-extensions connector)"),
+    ("project-flogo/contrib/activity/rest",      "HTTP/REST client (project-flogo)"),
+    ("tibco/flogo-general",                       "TIBCO Flogo General activities"),
+    ("tibco/wi-contrib",                          "TIBCO Wi-Contrib activities"),
+    ("project-flogo/contrib/activity/jdbc",       "JDBC database connector"),
+    ("tibco/wi-ems",                              "TIBCO EMS messaging"),
+    ("project-flogo/contrib/trigger/kafka",       "Apache Kafka trigger"),
+    ("project-flogo/contrib/trigger/timer",       "Timer / scheduled trigger"),
+    ("project-flogo/contrib/function",            "Flogo built-in functions"),
+    ("tibco/wi-aws",                              "AWS connector"),
+    ("tibco/wi-azure",                            "Azure connector"),
+]
+
+
+def detect_technologies(imports: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for imp in imports:
+        for pattern, label in _TECH_PATTERNS:
+            if pattern in imp and label not in seen:
+                seen.add(label)
+                result.append(label)
+    return result or ["Standard Flogo activities"]
+
+
+def detect_pattern(triggers: list[dict], flows: list["FlogoFlow"]) -> str:
+    refs = " ".join(t.get("ref", "") for t in triggers).lower()
+    if "rest" in refs or "http" in refs:
+        return "REST API Gateway" if len(flows) >= 3 else "REST Microservice"
+    if "kafka" in refs:
+        return "Event-Driven Service (Kafka)"
+    if "ems" in refs:
+        return "Event-Driven Service (TIBCO EMS)"
+    if "timer" in refs:
+        return "Scheduled / Batch Processing"
+    return "Flogo Application"
+
+
+def extract_endpoints(triggers: list[dict]) -> list[dict]:
+    endpoints = []
+    for trigger in triggers:
+        for handler in trigger.get("handlers", []):
+            s = handler.get("settings", {})
+            flow_uri = (
+                handler.get("action", {})
+                .get("settings", {})
+                .get("flowURI", "")
+                .replace("res://flow:", "")
+            )
+            endpoints.append({
+                "method":      s.get("Method", "POST"),
+                "path":        s.get("Path", "/"),
+                "flow":        flow_uri,
+                "description": handler.get("description", ""),
+            })
+    return endpoints
+
+
 # ── Rules ────────────────────────────────────────────────────────────────────
 
 class MissingErrorHandlerRule(Rule):
@@ -213,3 +274,108 @@ class SubflowDepthRule(Rule):
                     tags=self.tags,
                 ))
         return findings
+
+
+# ── Positive / strength rules (Severity.GOOD) ────────────────────────────────
+
+class AppDescriptionRule(Rule):
+    id = "FLOGO-P001"
+    severity = Severity.GOOD
+    category = "quality"
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        desc = ctx.raw.get("description", "").strip()
+        if desc:
+            return [Finding(
+                rule_id=self.id, severity=self.severity,
+                title="App has a description",
+                location="app root",
+                message=f'Documentation present: "{desc[:100]}"',
+                recommendation="",
+            )]
+        return []
+
+
+class FlowNamingConventionRule(Rule):
+    id = "FLOGO-P002"
+    severity = Severity.GOOD
+    category = "quality"
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        if not ctx.flows:
+            return []
+        well_named = [f for f in ctx.flows if "_" in f.name or f.name.islower()]
+        if len(well_named) == len(ctx.flows):
+            return [Finding(
+                rule_id=self.id, severity=self.severity,
+                title="Consistent flow naming convention",
+                location="all flows",
+                message=f"All {len(ctx.flows)} flows follow snake_case naming — improves readability and searchability.",
+                recommendation="",
+            )]
+        return []
+
+
+class DedicatedConnectorRule(Rule):
+    id = "FLOGO-P003"
+    severity = Severity.GOOD
+    category = "architecture"
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        connectors = [i for i in ctx.raw.get("imports", []) if "connector" in i.lower()]
+        if connectors:
+            return [Finding(
+                rule_id=self.id, severity=self.severity,
+                title="Uses dedicated connector(s)",
+                location="app imports",
+                message=(
+                    f"{len(connectors)} dedicated connector(s) detected. "
+                    "Using typed connectors instead of raw HTTP calls provides schema validation, "
+                    "connection pooling, and centralised credential management."
+                ),
+                recommendation="",
+            )]
+        return []
+
+
+class SeparationOfConcernsRule(Rule):
+    id = "FLOGO-P004"
+    severity = Severity.GOOD
+    category = "architecture"
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        names = [f.name.lower() for f in ctx.flows]
+        has_write = any(kw in n for n in names for kw in ("ingest", "create", "write", "upload", "insert"))
+        has_read  = any(kw in n for n in names for kw in ("query", "search", "read", "get", "fetch"))
+        if has_write and has_read and len(ctx.flows) >= 2:
+            return [Finding(
+                rule_id=self.id, severity=self.severity,
+                title="Read and write operations are separated",
+                location="flow design",
+                message=(
+                    "Ingest (write) and query (read) paths are implemented as distinct flows. "
+                    "This enables independent scaling, testing, and error handling per operation type."
+                ),
+                recommendation="",
+            )]
+        return []
+
+
+class ApiVersioningRule(Rule):
+    id = "FLOGO-P005"
+    severity = Severity.GOOD
+    category = "api-design"
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        # Check trigger has an API version set
+        for trigger in ctx.triggers:
+            version = trigger.get("settings", {}).get("apiVersion", "")
+            if version and version != "1.0.0":
+                return [Finding(
+                    rule_id=self.id, severity=self.severity,
+                    title="API versioning configured",
+                    location=f"trigger:{trigger.get('name', trigger.get('id', ''))}",
+                    message=f"Trigger exposes API version {version}, enabling controlled deprecation.",
+                    recommendation="",
+                )]
+        return []

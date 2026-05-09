@@ -110,9 +110,15 @@ def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: 
         parts.append(
             "\n\n## Static Analysis Results (uploaded .flogo file)\n\n"
             + report.to_markdown()
-            + "\n\n---\nUsing the findings above, answer the user's question directly. "
-            "Lead with a verdict, then list issues by severity with flow/activity names. "
-            "Do NOT re-describe the app — focus on what needs fixing and how."
+            + "\n\n---\n"
+            "You are a senior TIBCO Integration architect reviewing this application. "
+            "Using the structured analysis above, write a comprehensive review covering:\n"
+            "1. **Overall verdict** — one paragraph on whether the implementation is production-ready.\n"
+            "2. **What is well implemented** — acknowledge the strengths from the analysis.\n"
+            "3. **Critical issues** — explain each error: why it matters in production, not just what it is.\n"
+            "4. **Improvements & recommendations** — beyond the detected issues: patterns, scalability, observability, security.\n"
+            "Be specific. Cite flow names, activity names, and endpoint paths. "
+            "Write as a peer talking to a developer, not as a checklist generator."
         )
 
     if log_content.strip():
