@@ -381,7 +381,7 @@ def _apply_settings() -> bool:
     }
     if provider == "ollama":
         required_text["ollama_base_url"] = ("Ollama URL", st.session_state.s_ollama_url)
-    elif provider != "custom":
+    elif provider not in ("custom", "ollama-cloud"):
         required_text["llm_api_key"] = ("API Key", st.session_state.s_api_key)
 
     errors = [label for _, (label, val) in required_text.items() if not val.strip()]
@@ -748,10 +748,12 @@ def main() -> None:
                 # ── Read-only view ────────────────────────────────────────────
                 from tibco_agent.config import settings as s
                 _RO_LABELS = {
-                    "ollama": "Ollama (Local)", "openai": "OpenAI",
-                    "anthropic": "Anthropic / Claude",
-                    "groq": "Groq  —  Fast & Free Cloud",
-                    "custom": "Custom (OpenAI-compatible URL)",
+                    "ollama":       "Ollama (Local)",
+                    "ollama-cloud": "Ollama Cloud  —  Cloud-hosted models",
+                    "openai":       "OpenAI",
+                    "anthropic":    "Anthropic / Claude",
+                    "groq":         "Groq  —  Fast & Free Cloud",
+                    "custom":       "Custom (OpenAI-compatible URL)",
                 }
                 st.text_input("Provider",        value=_RO_LABELS.get(s.llm_provider, s.llm_provider), disabled=True)
                 st.text_input("LLM Model",       value=s.llm_model,        disabled=True)
@@ -775,11 +777,12 @@ def main() -> None:
             else:
                 # ── Edit view ─────────────────────────────────────────────────
                 _PROVIDER_LABELS = {
-                    "ollama":    "Ollama (Local)",
-                    "openai":    "OpenAI",
-                    "anthropic": "Anthropic / Claude",
-                    "groq":      "Groq  —  Fast & Free Cloud",
-                    "custom":    "Custom (OpenAI-compatible URL)",
+                    "ollama":       "Ollama (Local)",
+                    "ollama-cloud": "Ollama Cloud  —  Cloud-hosted models",
+                    "openai":       "OpenAI",
+                    "anthropic":    "Anthropic / Claude",
+                    "groq":         "Groq  —  Fast & Free Cloud",
+                    "custom":       "Custom (OpenAI-compatible URL)",
                 }
                 st.markdown("**LLM Provider**")
                 provider = st.selectbox(
@@ -799,6 +802,19 @@ def main() -> None:
                 if provider == "ollama":
                     st.text_input("Ollama URL", key="s_ollama_url",
                                   help="Base URL of your local Ollama server.")
+                elif provider == "ollama-cloud":
+                    st.info(
+                        "Ollama Cloud runs models remotely at **https://ollama.com/v1** "
+                        "(OpenAI-compatible API).  \n"
+                        "Sign in at [ollama.com](https://ollama.com) and generate an API key "
+                        "under your account settings.  \n"
+                        "⚠️ Large models (e.g. `671b-cloud`) require a paid subscription — "
+                        "free-tier models include `llama3.1:8b-instruct-cloud`."
+                    )
+                    st.text_input("Ollama Cloud API Key", key="s_api_key", type="password",
+                                  help="Your ollama.com account API key.")
+                    # Base URL is fixed for Ollama Cloud — keep state in sync
+                    st.session_state.s_api_base = "https://ollama.com/v1"
                 elif provider == "groq":
                     st.info(
                         "Groq offers **free** cloud inference for Llama, DeepSeek and more — "
@@ -818,13 +834,12 @@ def main() -> None:
                                   help="OpenAI-compatible API base, e.g. https://your-host/v1")
                     st.text_input("API Key (optional)", key="s_api_key", type="password")
 
-                # Ollama URL field not relevant for cloud providers — keep state in sync
+                # Keep non-relevant fields in sync so they don't carry stale values
                 if provider != "ollama":
-                    st.session_state.setdefault("s_ollama_url",
-                                                "http://localhost:11434")
-                if provider not in ("groq", "openai", "anthropic", "custom"):
+                    st.session_state.setdefault("s_ollama_url", "http://localhost:11434")
+                if provider not in ("groq", "openai", "anthropic", "custom", "ollama-cloud"):
                     st.session_state.setdefault("s_api_key", "")
-                if provider != "custom":
+                if provider not in ("custom", "ollama-cloud"):
                     st.session_state.setdefault("s_api_base", "")
 
                 st.markdown("**Embedding Model**")

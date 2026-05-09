@@ -77,17 +77,19 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 # Preset base URLs for cloud providers
 _PROVIDER_BASE_URLS: dict[str, str] = {
-    "groq":   "https://api.groq.com/openai/v1",
-    "openai": "https://api.openai.com/v1",
+    "groq":         "https://api.groq.com/openai/v1",
+    "openai":       "https://api.openai.com/v1",
+    "ollama-cloud": "https://ollama.com/v1",
 }
 
 # Suggested models shown as hints in the UI (imported by app.py)
 PROVIDER_MODEL_HINTS: dict[str, str] = {
-    "ollama":    "deepseek-r1:latest · llama3.1:8b · mistral:7b",
-    "openai":    "gpt-4o · gpt-4o-mini · gpt-3.5-turbo",
-    "anthropic": "claude-opus-4-7 · claude-sonnet-4-6 · claude-haiku-4-5-20251001",
-    "groq":      "llama-3.3-70b-versatile · deepseek-r1-distill-llama-70b · llama-3.1-8b-instant",
-    "custom":    "model name depends on your provider",
+    "ollama":       "deepseek-r1:latest · llama3.1:8b · mistral:7b",
+    "openai":       "gpt-4o · gpt-4o-mini · gpt-3.5-turbo",
+    "anthropic":    "claude-opus-4-7 · claude-sonnet-4-6 · claude-haiku-4-5-20251001",
+    "groq":         "llama-3.3-70b-versatile · deepseek-r1-distill-llama-70b · llama-3.1-8b-instant",
+    "ollama-cloud": "llama3.3:70b-instruct-cloud · deepseek-v3.1:671b-cloud · llama3.1:8b-instruct-cloud",
+    "custom":       "model name depends on your provider",
 }
 
 
@@ -115,7 +117,7 @@ def _make_llm():
             max_tokens=4096,
         )
 
-    if provider in ("groq", "custom"):
+    if provider in ("groq", "ollama-cloud", "custom"):
         from llama_index.llms.openai_like import OpenAILike
         base = settings.llm_api_base or _PROVIDER_BASE_URLS.get(provider, "")
         return OpenAILike(
