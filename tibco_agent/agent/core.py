@@ -12,7 +12,7 @@ from llama_index.llms.ollama import Ollama
 
 from tibco_agent.config import settings
 from tibco_agent.tools.registry import ToolRegistry
-from tibco_agent.tools.agent_tools import build_knowledge_tool, build_flogo_tool, build_log_tool, search_knowledge
+from tibco_agent.tools.agent_tools import build_knowledge_tool, build_flogo_tool, build_bw_tool, build_log_tool, search_knowledge
 
 _SYSTEM_PROMPT = """\
 You are TARA (TIBCO AI Review Agent), an expert assistant specializing in:
@@ -160,6 +160,7 @@ def build_agent(registry: ToolRegistry | None = None) -> ReActAgent:
         if len(registry) == 0:
             registry.register(build_knowledge_tool())
             registry.register(build_flogo_tool())
+            registry.register(build_bw_tool())
             registry.register(build_log_tool())
 
     # LlamaIndex 0.14+ uses workflow-based agents — constructor replaces from_tools()
@@ -199,6 +200,7 @@ def build_prompt(
     question: str,
     flogo_content: str = "",
     log_content: str = "",
+    bw_content: str = "",
     on_step: Callable[[str, int], None] | None = None,
     chat_history: list[dict] | None = None,
 ) -> str:
@@ -234,6 +236,26 @@ def build_prompt(
         )
 
     intent = _classify_intent(question)
+
+    if bw_content.strip():
+        _step("Analyzing BW process…", 38)
+        from tibco_agent.analyzers.bw_analyzer import BWAnalyzer
+        bw_report = BWAnalyzer().analyze(bw_content)
+        bw_analyzer_obj = BWAnalyzer()
+        if intent == "review":
+            bw_suffix = (
+                "\n\n---\n"
+                "You are a senior TIBCO BW architect reviewing this process. "
+                "Write a comprehensive review: verdict, strengths, critical issues with production impact, "
+                "and improvement recommendations. Cite process names and activity names."
+            )
+        else:
+            bw_suffix = (
+                "\n\n---\n"
+                "The BW analysis above is context. Answer the user's question directly and concisely. "
+                "Only surface the parts of the analysis relevant to the question."
+            )
+        parts.append("\n\n" + bw_analyzer_obj._report_to_markdown(bw_report) + bw_suffix)
 
     if flogo_content.strip():
         _step("Analyzing application…", 40)
@@ -294,7 +316,8 @@ def ask(
     question: str,
     flogo_content: str = "",
     log_content: str = "",
+    bw_content: str = "",
     chat_history: list[dict] | None = None,
 ) -> str:
-    prompt = build_prompt(question, flogo_content, log_content, chat_history=chat_history)
+    prompt = build_prompt(question, flogo_content, log_content, bw_content, chat_history=chat_history)
     return call_llm(agent, prompt)

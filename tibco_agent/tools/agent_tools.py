@@ -16,10 +16,81 @@ from llama_index.embeddings.ollama import OllamaEmbedding
 from tibco_agent.config import settings
 from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
 from tibco_agent.analyzers.log_analyzer import LogAnalyzer
+from tibco_agent.analyzers.bw_analyzer import BWAnalyzer
 
 # Module-level singletons — live for the process lifetime.
 _weaviate_client: weaviate.Client | None = None
 _embed_model: OllamaEmbedding | None = None
+
+# Hybrid search alpha: 0 = pure BM25, 1 = pure vector. 0.75 weights toward semantic.
+_HYBRID_ALPHA = 0.75
+_SEARCH_LIMIT = 10
+
+# Product keywords → Weaviate product tag for metadata filtering
+_PRODUCT_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("flogo",  ["flogo", ".flogo"]),
+    ("bw",     ["businessworks", "bwce", " bw6", " bw5", " bw ", "bwapp", ".bwp"]),
+    ("ems",    ["tibco ems", " ems ", "enterprise message service", "tibemsd"]),
+    ("ftl",    [" ftl ", "tibco ftl"]),
+    ("eftl",   ["eftl", "tibco eftl"]),
+]
+
+
+def _detect_product(query: str) -> str | None:
+    """Return a product tag if the query clearly targets one product, else None."""
+    q = query.lower()
+    for product, keywords in _PRODUCT_KEYWORDS:
+        if any(kw in q for kw in keywords):
+            return product
+    return None
+
+
+def _format_excerpts(objects: list[dict], numbered: bool = True) -> str:
+    parts = []
+    for i, obj in enumerate(objects, 1):
+        source = obj.get("file_name", "unknown")
+        product = obj.get("product", "")
+        label = f"{product} | {source}" if product else source
+        prefix = f"[Excerpt {i} — {label}]" if numbered else f"[{label}]"
+        parts.append(f"{prefix}\n{obj['text']}")
+    return "\n\n---\n\n".join(parts)
+
+
+def _hybrid_search(
+    client: weaviate.Client,
+    class_name: str,
+    query: str,
+    vector: list[float],
+    product_filter: str | None = None,
+) -> list[dict]:
+    """Run hybrid (BM25 + vector) search, optionally filtered by product tag."""
+    fields = ["text", "file_name", "product", "source_type"]
+    q = (
+        client.query
+        .get(class_name, fields)
+        .with_hybrid(query=query, vector=vector, alpha=_HYBRID_ALPHA)
+        .with_limit(_SEARCH_LIMIT)
+    )
+    if product_filter:
+        q = q.with_where({
+            "path": ["product"],
+            "operator": "Equal",
+            "valueText": product_filter,
+        })
+    result = q.do()
+    objects = result.get("data", {}).get("Get", {}).get(class_name, [])
+
+    # If product filter returned nothing, retry without it
+    if not objects and product_filter:
+        result = (
+            client.query
+            .get(class_name, fields)
+            .with_hybrid(query=query, vector=vector, alpha=_HYBRID_ALPHA)
+            .with_limit(_SEARCH_LIMIT)
+            .do()
+        )
+        objects = result.get("data", {}).get("Get", {}).get(class_name, [])
+    return objects
 
 
 def _get_weaviate_client() -> weaviate.Client:
@@ -40,7 +111,10 @@ def _get_embed_model() -> OllamaEmbedding:
 
 
 def search_knowledge(query: str) -> str:
-    """Eagerly query the TIBCO knowledge base. Returns empty string on any failure."""
+    """
+    Eagerly query the TIBCO knowledge base using hybrid search.
+    Returns formatted excerpts with source citations, or empty string on failure.
+    """
     try:
         client = _get_weaviate_client()
         class_name = settings.collection_name
@@ -50,30 +124,19 @@ def search_knowledge(query: str) -> str:
             return ""
         embed_model = _get_embed_model()
         vector = embed_model.get_text_embedding(query)
-        result = (
-            client.query
-            .get(class_name, ["text", "file_name"])
-            .with_near_vector({"vector": vector})
-            .with_limit(5)
-            .do()
-        )
-        objects = result.get("data", {}).get("Get", {}).get(class_name, [])
+        product = _detect_product(query)
+        objects = _hybrid_search(client, class_name, query, vector, product)
         if not objects:
             return ""
-        parts = []
-        for i, obj in enumerate(objects, 1):
-            source = obj.get("file_name", "unknown")
-            parts.append(f"[Excerpt {i} — {source}]\n{obj['text']}")
-        return "\n\n---\n\n".join(parts)
+        return _format_excerpts(objects)
     except Exception:
         return ""
 
 
 def build_knowledge_tool() -> FunctionTool:
     """
-    Retrieval-only RAG tool — embeds the query with Ollama, runs a
-    nearVector search in Weaviate, and returns raw chunks to the agent LLM.
-    Avoids a second LLM synthesis call, halving inference time on local models.
+    Retrieval-only RAG tool — hybrid BM25 + vector search in Weaviate.
+    Returns top-10 chunks with source citations to the agent LLM.
     """
     client = _get_weaviate_client()
     class_name = settings.collection_name
@@ -88,33 +151,24 @@ def build_knowledge_tool() -> FunctionTool:
 
     embed_model = _get_embed_model()
 
-    def search_tibco_knowledge(query: str) -> str:
-        """Search TIBCO Integration knowledge base and return relevant excerpts."""
+    def search_tibco_knowledge(query: str, product: str = "") -> str:
+        """Search TIBCO Integration knowledge base and return relevant excerpts with citations."""
         vector = embed_model.get_text_embedding(query)
-        result = (
-            client.query
-            .get(class_name, ["text", "file_name", "product"])
-            .with_near_vector({"vector": vector})
-            .with_limit(5)
-            .do()
-        )
-        objects = result.get("data", {}).get("Get", {}).get(class_name, [])
+        product_filter = product.strip().lower() or _detect_product(query)
+        objects = _hybrid_search(client, class_name, query, vector, product_filter)
         if not objects:
             return "No relevant information found in the knowledge base for this query."
-        parts = []
-        for i, obj in enumerate(objects, 1):
-            source = obj.get("file_name", "unknown")
-            parts.append(f"[Excerpt {i} from {source}]\n{obj['text']}")
-        return "\n\n---\n\n".join(parts)
+        return _format_excerpts(objects)
 
     return FunctionTool.from_defaults(
         fn=search_tibco_knowledge,
         name="tibco_knowledge_search",
         description=(
-            "Search the TIBCO Integration knowledge base for relevant information. "
-            "Use for: best practices, error explanations, patterns, JDBC/EMS/HTTP configuration, "
-            "Kubernetes deployment tips, performance tuning for BusinessWorks and Flogo. "
-            "Returns raw excerpts from the knowledge base."
+            "Search the TIBCO Integration & Messaging knowledge base. "
+            "Use for: best practices, error explanations, configuration patterns, "
+            "JDBC/EMS/HTTP setup, Kubernetes deployment, performance tuning for BW and Flogo. "
+            "Optional 'product' param to filter: flogo | bw | ems | ftl | eftl. "
+            "Returns top-10 excerpts with source citations."
         ),
     )
 
@@ -135,6 +189,27 @@ def build_flogo_tool(analyzer: FlogoAnalyzer | None = None) -> FunctionTool:
             "Detects: missing error handlers, HTTP timeouts, disabled SSL, SELECT * queries, "
             "sensitive data logging, and high subflow complexity. "
             "Call this whenever the user provides or uploads a .flogo file."
+        ),
+    )
+
+
+def build_bw_tool(analyzer: BWAnalyzer | None = None) -> FunctionTool:
+    """Static analysis of TIBCO BusinessWorks 6 / BWCE .bwp XML process files."""
+    _analyzer = analyzer or BWAnalyzer()
+
+    def analyze_bw_process(xml_content: str) -> str:
+        """Analyze a TIBCO BW6 process file (.bwp XML content as string) and return findings."""
+        report = _analyzer.analyze(xml_content)
+        return _analyzer._report_to_markdown(report)
+
+    return FunctionTool.from_defaults(
+        fn=analyze_bw_process,
+        name="analyze_bw_process",
+        description=(
+            "Analyze a TIBCO BusinessWorks 6 or BWCE process file (.bwp XML as string). "
+            "Detects: missing fault handlers, hardcoded URLs, plain-text passwords, "
+            "HTTP activities without retry, SELECT * in JDBC queries, and oversized processes. "
+            "Call this when the user provides or uploads a .bwp or BW process XML file."
         ),
     )
 

@@ -601,6 +601,8 @@ def _render_download_buttons() -> None:
     reports = []
     if "flogo_report" in st.session_state:
         reports.append(("Flogo", st.session_state.flogo_report))
+    if "bw_report" in st.session_state:
+        reports.append(("BW", st.session_state.bw_report))
     if "log_report" in st.session_state:
         reports.append(("Log", st.session_state.log_report))
     if not reports:
@@ -611,10 +613,18 @@ def _render_download_buttons() -> None:
             st.markdown(f"**{label}:** `{report.source}`")
             col_md, col_html, col_pdf = st.columns(3)
             stem = Path(report.source).stem
+            # BW reports use _report_to_markdown; Flogo/Log use to_markdown
+            from tibco_agent.analyzers.bw_analyzer import BWAnalyzer as _BWA
+            _bwa = _BWA()
+            _md_text = (
+                _bwa._report_to_markdown(report)
+                if report.product == "bw"
+                else report.to_markdown()
+            )
             with col_md:
                 st.download_button(
                     "MD",
-                    data=report.to_markdown().encode("utf-8"),
+                    data=_md_text.encode("utf-8"),
                     file_name=f"{stem}_report.md",
                     mime="text/markdown",
                     use_container_width=True,
@@ -889,6 +899,7 @@ def main() -> None:
     # ── Sidebar ───────────────────────────────────────────────────────────────
     flogo_content = ""
     log_content   = ""
+    bw_content    = ""
 
     with st.sidebar:
         with st.expander("Upload for Analysis", expanded=True):
@@ -897,6 +908,11 @@ def main() -> None:
                 type=["flogo", "json"],
                 help="Upload a .flogo file for static analysis — missing error handlers, timeouts, SSL, etc.",
             )
+            bw_file = st.file_uploader(
+                "BW6 / BWCE process (.bwp)",
+                type=["bwp", "xml"],
+                help="Upload a BusinessWorks 6 or BWCE .bwp process XML for static analysis.",
+            )
             log_file = st.file_uploader(
                 "Integration log (.log / .txt)",
                 type=["log", "txt"],
@@ -904,6 +920,7 @@ def main() -> None:
             )
 
             flogo_content = flogo_file.read().decode("utf-8") if flogo_file else ""
+            bw_content    = bw_file.read().decode("utf-8")    if bw_file    else ""
             log_content   = log_file.read().decode("utf-8")   if log_file   else ""
 
             if flogo_content:
@@ -914,6 +931,15 @@ def main() -> None:
                 )
             else:
                 st.session_state.pop("flogo_report", None)
+
+            if bw_content:
+                st.success(f"BW process loaded ({len(bw_content):,} chars)")
+                from tibco_agent.analyzers.bw_analyzer import BWAnalyzer
+                st.session_state.bw_report = BWAnalyzer().analyze(
+                    bw_content, source=bw_file.name
+                )
+            else:
+                st.session_state.pop("bw_report", None)
 
             if log_content:
                 st.success(f"Log loaded ({len(log_content):,} chars)")
@@ -926,10 +952,80 @@ def main() -> None:
 
             _render_download_buttons()
 
+        with st.expander("Analyze Project (ZIP)", expanded=False):
+            zip_file = st.file_uploader(
+                "Project ZIP (.flogo + .bwp files)",
+                type=["zip"],
+                help="Upload a ZIP containing .flogo or .bwp files for cross-file project analysis.",
+            )
+            if zip_file:
+                from tibco_agent.analyzers.multi_analyzer import analyze_zip
+                zip_bytes = zip_file.read()
+                with st.spinner("Analyzing project…"):
+                    zip_analysis = analyze_zip(zip_bytes, zip_name=zip_file.name)
+                st.session_state.zip_analysis = zip_analysis
+                n_flogo = len(zip_analysis.flogo_reports)
+                n_bw    = len(zip_analysis.bw_reports)
+                st.success(
+                    f"Analyzed: {n_flogo} Flogo, {n_bw} BW file(s)  \n"
+                    f"{zip_analysis.total_errors} error(s) · {zip_analysis.total_warnings} warning(s)"
+                )
+                if zip_analysis.cross_flow_issues:
+                    st.warning(f"{len(zip_analysis.cross_flow_issues)} cross-file issue(s) found")
+                zip_md = zip_analysis.to_markdown()
+                st.download_button(
+                    "Download Project Report (MD)",
+                    data=zip_md,
+                    file_name=f"{zip_file.name}-report.md",
+                    mime="text/markdown",
+                    use_container_width=True,
+                )
+                if st.button("Ask TARA to review this project", use_container_width=True):
+                    st.session_state.pending_prompt = (
+                        f"Review the uploaded project ZIP `{zip_file.name}`. "
+                        "Summarize the findings, highlight the critical issues, and give prioritized recommendations.\n\n"
+                        + zip_md[:6000]
+                    )
+            else:
+                st.session_state.pop("zip_analysis", None)
+
         with st.expander("Quick Prompts", expanded=False):
             for label, prompt in _QUICK_PROMPTS:
                 if st.button(label, use_container_width=True):
                     st.session_state.pending_prompt = prompt
+
+        with st.expander("Troubleshoot", expanded=False):
+            st.caption("Start a guided diagnosis — TARA will ask targeted questions.")
+            _WORKFLOWS = [
+                ("🚫 Pod Won't Start",
+                 "I need structured help troubleshooting a Kubernetes pod that won't start. "
+                 "Ask me one question at a time: first what error I'm seeing "
+                 "(CrashLoopBackOff, OOMKilled, Pending, ImagePullBackOff, etc.), "
+                 "then guide me to the relevant diagnostic output. "
+                 "Give specific `kubectl` commands. Work toward a root cause."),
+                ("🔌 Integration / API Failing",
+                 "I need help diagnosing a failing TIBCO integration. "
+                 "Ask me: Flogo or BW? What does the failure look like — timeout, error response, wrong data? "
+                 "What does the integration do? "
+                 "Ask one question at a time, then diagnose systematically."),
+                ("📉 Performance Degraded",
+                 "I need help diagnosing a performance issue in a TIBCO application. "
+                 "Ask me: product (Flogo/BW), symptoms (slow, OOM, high CPU, thread exhaustion), environment. "
+                 "Work through the investigation one question at a time with specific profiling steps."),
+                ("📨 EMS / Messaging Issue",
+                 "I need help diagnosing a TIBCO EMS or messaging problem. "
+                 "Ask me: is it connection failure, authentication, message loss, or queue depth buildup? "
+                 "Give targeted diagnostic commands based on my answers."),
+                ("✅ Pre-Deployment Checklist",
+                 "Run me through a pre-deployment checklist for a TIBCO application going to production. "
+                 "Ask me: Flogo or BW, Kubernetes or on-prem. "
+                 "Then cover: error handling, timeouts, SSL, credential management, "
+                 "health probes, resource limits, and observability. "
+                 "Be structured — one area at a time."),
+            ]
+            for label, wf_prompt in _WORKFLOWS:
+                if st.button(label, use_container_width=True):
+                    st.session_state.pending_prompt = wf_prompt
 
         # ── Settings — opens as centered modal dialog ─────────────────────────
         from tibco_agent.config import settings as _s
@@ -1126,7 +1222,7 @@ def main() -> None:
                 if m["role"] in ("user", "assistant")
             ][-8:]  # last 4 turns max
             prompt = build_prompt(
-                user_input, flogo_content, log_content,
+                user_input, flogo_content, log_content, bw_content,
                 on_step=_update,
                 chat_history=_history or None,
             )
