@@ -1,0 +1,41 @@
+[project]
+# Disable anonymous telemetry
+enable_telemetry = false
+
+[features]
+# Allow file uploads in the chat input bar
+multi_modal = true
+
+# Automatically scroll to the latest message
+auto_scroll = true
+
+[UI]
+name = "TARA"
+description = "TIBCO AI Review Agent — Expert assistant for TIBCO BW, Flogo, EMS, and Messaging"
+
+# Show the readme as a welcome screen when the chat is empty
+show_readme_as_default = true
+
+# Collapse steps (analysis sub-steps) by default to keep the UI clean
+default_collapse_content = true
+
+[UI.theme]
+default = "light"
+
+[UI.theme.light]
+background = "#eef3f9"
+paper = "#ffffff"
+
+[UI.theme.light.primary]
+main    = "#0057a8"
+dark    = "#003865"
+light   = "#4a90d9"
+
+[UI.theme.dark]
+background = "#0d1117"
+paper      = "#161b22"
+
+[UI.theme.dark.primary]
+main  = "#4a90d9"
+dark  = "#0057a8"
+light = "#90c4f0"
