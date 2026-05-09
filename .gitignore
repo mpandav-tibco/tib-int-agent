@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+
+# Environment
+.env
+
+# Data — knowledge files are user-supplied; vector DB is rebuilt via ingest.py
+data/chroma_db/
+data/knowledge/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
