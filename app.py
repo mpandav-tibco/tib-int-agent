@@ -45,12 +45,16 @@ def _load_agent():
 
 # ── Settings helpers ──────────────────────────────────────────────────────────
 
-def _init_session_settings(force: bool = False) -> None:
+def _init_session_settings() -> None:
     """Seed session state from the live config object.
 
-    force=True is used after Cancel to discard any in-progress edits.
+    Runs once on first load. Set st.session_state._reset_settings = True
+    before calling st.rerun() to force a re-seed on the next pass
+    (used by Cancel and Edit buttons). Never modifies widget keys while
+    widgets are already instantiated — avoids the Streamlit APIException.
     """
-    if st.session_state.get("_settings_seeded") and not force:
+    reset = st.session_state.pop("_reset_settings", False)
+    if st.session_state.get("_settings_seeded") and not reset:
         return
     from tibco_agent.config import settings as s
     st.session_state.s_llm_model    = s.llm_model
@@ -238,6 +242,7 @@ def main() -> None:
                 st.text_input("Request Timeout",  value=f"{int(s.request_timeout)}s", disabled=True)
 
                 if st.button("Edit Settings", use_container_width=True):
+                    st.session_state._reset_settings     = True  # re-seed before widgets render
                     st.session_state._settings_edit_mode = True
                     st.session_state._settings_expanded  = True
                     st.rerun()
@@ -273,7 +278,7 @@ def main() -> None:
                             st.rerun()
                 with col2:
                     if st.button("Cancel", use_container_width=True):
-                        _init_session_settings(force=True)   # discard edits
+                        st.session_state._reset_settings     = True  # re-seed on next rerun
                         st.session_state._settings_edit_mode = False
                         st.session_state._settings_expanded  = True
                         st.rerun()
@@ -285,6 +290,29 @@ def main() -> None:
     # ── Chat ──────────────────────────────────────────────────────────────────
     if "messages" not in st.session_state:
         st.session_state.messages = []
+
+    if not st.session_state.messages:
+        st.markdown("<div style='height: 40px'></div>", unsafe_allow_html=True)
+        col_l, col_c, col_r = st.columns([1, 2, 1])
+        with col_c:
+            st.markdown(
+                "<h3 style='text-align:center; color:#003865;'>How can I help you today?</h3>",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                "<p style='text-align:center; color:#666; margin-bottom:32px;'>"
+                "Ask anything about TIBCO BusinessWorks or Flogo — or use the sidebar to upload "
+                "a <code>.flogo</code> file for review or a pod log for diagnosis.</p>",
+                unsafe_allow_html=True,
+            )
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.info("**Knowledge Q&A**\n\nAsk about BW/Flogo configuration, patterns, error codes, and best practices.")
+        with c2:
+            st.info("**App Review**\n\nUpload a `.flogo` file → architect-level review: errors, warnings, and strengths.")
+        with c3:
+            st.info("**Log Diagnosis**\n\nUpload a K8s pod log → root-cause analysis with exact remediation steps.")
+        st.markdown("<div style='height: 40px'></div>", unsafe_allow_html=True)
 
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
