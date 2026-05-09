@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 import chainlit as cl
+from chainlit.input_widget import Select, TextInput, Slider
 
 from tibco_agent.agent.core import PROVIDER_MODEL_HINTS, build_prompt
 from tibco_agent.config import settings as _cfg
@@ -114,40 +115,52 @@ async def on_chat_start() -> None:
 
     await cl.ChatSettings(
         [
-            cl.Select(
+            Select(
                 id="provider",
                 label="LLM Provider",
                 values=["ollama", "openai", "anthropic", "groq", "ollama-cloud", "custom"],
                 initial_value=_cfg.llm_provider,
             ),
-            cl.TextInput(
+            TextInput(
                 id="model",
                 label="Model",
                 initial=_cfg.llm_model,
                 placeholder=PROVIDER_MODEL_HINTS.get(_cfg.llm_provider, ""),
             ),
-            cl.TextInput(
+            TextInput(
                 id="api_key",
                 label="API Key",
                 initial="",
                 placeholder="Leave blank for local Ollama",
             ),
-            cl.TextInput(
+            TextInput(
                 id="api_base",
                 label="API Base URL",
                 initial=_cfg.llm_api_base,
                 placeholder="For custom / Groq / Ollama Cloud",
             ),
-            cl.TextInput(id="ollama_url", label="Ollama URL", initial=_cfg.ollama_base_url),
-            cl.TextInput(
+            TextInput(
+                id="ollama_url",
+                label="Ollama URL",
+                initial=_cfg.ollama_base_url,
+            ),
+            TextInput(
                 id="embed_model",
                 label="Embed Model",
                 initial=_cfg.embed_model,
                 placeholder="nomic-embed-text",
             ),
-            cl.TextInput(id="weaviate_url", label="Weaviate URL", initial=_cfg.weaviate_url),
-            cl.TextInput(id="collection", label="Collection Name", initial=_cfg.collection_name),
-            cl.Slider(
+            TextInput(
+                id="weaviate_url",
+                label="Weaviate URL",
+                initial=_cfg.weaviate_url,
+            ),
+            TextInput(
+                id="collection",
+                label="Collection Name",
+                initial=_cfg.collection_name,
+            ),
+            Slider(
                 id="timeout",
                 label="Timeout (s)",
                 min=30,
