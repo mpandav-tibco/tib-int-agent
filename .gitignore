@@ -18,3 +18,4 @@ data/knowledge/
 # OS
 .DS_Store
 Thumbs.db
+data/feedback.db
