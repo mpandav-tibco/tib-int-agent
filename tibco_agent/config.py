@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-@dataclass(frozen=True)
+@dataclass
 class Settings:
     ollama_base_url: str
     llm_model: str
@@ -19,6 +19,13 @@ class Settings:
 
     def validate(self) -> None:
         Path(self.knowledge_path).mkdir(parents=True, exist_ok=True)
+
+    def apply(self, **kwargs) -> None:
+        """Update one or more fields at runtime (used by the Streamlit settings UI)."""
+        for k, v in kwargs.items():
+            if not hasattr(self, k):
+                raise ValueError(f"Unknown setting: {k}")
+            setattr(self, k, v)
 
 
 settings = Settings(
