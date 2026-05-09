@@ -43,9 +43,12 @@ def _load_agent():
 
 # ── Settings helpers ──────────────────────────────────────────────────────────
 
-def _init_session_settings() -> None:
-    """Seed session state from the live config object (once per session)."""
-    if st.session_state.get("_settings_seeded"):
+def _init_session_settings(force: bool = False) -> None:
+    """Seed session state from the live config object.
+
+    force=True is used after Cancel to discard any in-progress edits.
+    """
+    if st.session_state.get("_settings_seeded") and not force:
         return
     from tibco_agent.config import settings as s
     st.session_state.s_llm_model    = s.llm_model
@@ -151,51 +154,61 @@ def main() -> None:
         st.divider()
 
         # ── Settings expander ─────────────────────────────────────────────────
-        with st.expander("Settings", expanded=False):
-            _init_session_settings()
+        _init_session_settings()
+        edit_mode = st.session_state.get("_settings_edit_mode", False)
+        expanded  = st.session_state.get("_settings_expanded", False)
 
-            st.markdown("**Language Model**")
-            st.text_input(
-                "LLM Model",
-                key="s_llm_model",
-                help=f"Ollama model name. Common: {_LLM_MODELS}",
-            )
-            st.text_input(
-                "Embed Model",
-                key="s_embed_model",
-                help=f"Ollama embedding model. Common: {_EMBED_MODELS}",
-            )
-            st.text_input(
-                "Ollama URL",
-                key="s_ollama_url",
-                help="Base URL of your Ollama server.",
-            )
+        with st.expander("Settings", expanded=expanded):
+            if not edit_mode:
+                # ── Read-only view ────────────────────────────────────────────
+                from tibco_agent.config import settings as s
+                st.text_input("LLM Model",       value=s.llm_model,        disabled=True)
+                st.text_input("Embed Model",      value=s.embed_model,      disabled=True)
+                st.text_input("Ollama URL",       value=s.ollama_base_url,  disabled=True)
+                st.text_input("Weaviate URL",     value=s.weaviate_url,     disabled=True)
+                st.text_input("Collection Name",  value=s.collection_name,  disabled=True)
+                st.text_input("Request Timeout",  value=f"{int(s.request_timeout)}s", disabled=True)
 
-            st.markdown("**Vector Store**")
-            st.text_input(
-                "Weaviate URL",
-                key="s_weaviate_url",
-                help="URL of your Weaviate instance.",
-            )
-            st.text_input(
-                "Collection Name",
-                key="s_collection",
-                help="Weaviate class name — must start with an uppercase letter.",
-            )
+                if st.button("Edit Settings", use_container_width=True):
+                    st.session_state._settings_edit_mode = True
+                    st.session_state._settings_expanded  = True
+                    st.rerun()
 
-            st.markdown("**Performance**")
-            st.slider(
-                "Request Timeout (s)",
-                min_value=30,
-                max_value=600,
-                step=30,
-                key="s_timeout",
-                help="Max seconds to wait for an Ollama response.",
-            )
+            else:
+                # ── Edit view ─────────────────────────────────────────────────
+                st.markdown("**Language Model**")
+                st.text_input("LLM Model",    key="s_llm_model",
+                              help=f"Ollama model name. Common: {_LLM_MODELS}")
+                st.text_input("Embed Model",  key="s_embed_model",
+                              help=f"Ollama embedding model. Common: {_EMBED_MODELS}")
+                st.text_input("Ollama URL",   key="s_ollama_url",
+                              help="Base URL of your Ollama server.")
 
-            if st.button("Apply & Rebuild Agent", type="primary", use_container_width=True):
-                _apply_settings()
-                st.success("Settings saved. Agent will rebuild on your next query.")
+                st.markdown("**Vector Store**")
+                st.text_input("Weaviate URL",    key="s_weaviate_url",
+                              help="URL of your Weaviate instance.")
+                st.text_input("Collection Name", key="s_collection",
+                              help="Weaviate class name — must start with an uppercase letter.")
+
+                st.markdown("**Performance**")
+                st.slider("Request Timeout (s)", min_value=30, max_value=600, step=30,
+                          key="s_timeout", help="Max seconds to wait for an Ollama response.")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Apply & Rebuild", type="primary", use_container_width=True):
+                        _apply_settings()
+                        st.session_state._settings_edit_mode = False
+                        st.session_state._settings_expanded  = False
+                        st.toast("Settings saved — agent will rebuild on your next query.",
+                                 icon="✅")
+                        st.rerun()
+                with col2:
+                    if st.button("Cancel", use_container_width=True):
+                        _init_session_settings(force=True)   # discard edits
+                        st.session_state._settings_edit_mode = False
+                        st.session_state._settings_expanded  = True
+                        st.rerun()
 
         if st.button("Clear Chat", use_container_width=True):
             st.session_state.messages = []
