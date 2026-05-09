@@ -107,6 +107,11 @@ def _build_agent_safe():
 
 @cl.on_chat_start
 async def on_chat_start() -> None:
+    # Custom avatars — TARA (TIBCO blue) and a generic user icon
+    await cl.Avatar(name="TARA",     url="/public/tara_avatar.svg").send()
+    await cl.Avatar(name="Chainlit", url="/public/tara_avatar.svg").send()  # fallback if config name not applied
+    await cl.Avatar(name="User",     url="/public/user_avatar.svg").send()
+
     await cl.ChatSettings(
         [
             cl.Select(
@@ -235,7 +240,8 @@ async def _stream_into(prompt: str, out_msg: cl.Message) -> str:
         if remaining:
             await out_msg.stream_token(remaining)
 
-        await out_msg.update()
+        # Do NOT call out_msg.update() here — caller does one final update
+        # so Chainlit only renders the full content once (prevents duplication).
         return final_cleaned
 
     except Exception:
@@ -248,7 +254,7 @@ async def _stream_into(prompt: str, out_msg: cl.Message) -> str:
             result = await loop.run_in_executor(None, lambda: str(lm.complete(prompt)))
         cleaned = _clean(result)
         out_msg.content = cleaned
-        await out_msg.update()
+        # Caller handles the final update
         return cleaned
 
 
@@ -261,7 +267,6 @@ async def on_thumbs_up(action: cl.Action) -> None:
     idx = len(cl.user_session.get("chat_history", [])) // 2
     _feedback.record(idx, "up", q, r)
     await action.remove()
-    await cl.Message(content="Thanks for your feedback! 👍").send()
 
 
 @cl.action_callback("thumbs_down")
@@ -271,7 +276,6 @@ async def on_thumbs_down(action: cl.Action) -> None:
     idx = len(cl.user_session.get("chat_history", [])) // 2
     _feedback.record(idx, "down", q, r)
     await action.remove()
-    await cl.Message(content="Thanks — noted. I'll try to do better. 👎").send()
 
 
 @cl.action_callback("export_chat")
@@ -296,11 +300,13 @@ async def on_export_chat(action: cl.Action) -> None:
     ).send()
 
 
-_RESPONSE_ACTIONS = [
-    cl.Action(name="thumbs_up",   label="👍 Helpful",     value="up"),
-    cl.Action(name="thumbs_down", label="👎 Not helpful", value="down"),
-    cl.Action(name="export_chat", label="📥 Export Chat", value="export"),
-]
+def _make_actions() -> list:
+    """Return fresh Action objects for each message (Chainlit binds them per-message)."""
+    return [
+        cl.Action(name="thumbs_up",   label="👍", value="up",     description="Mark as helpful"),
+        cl.Action(name="thumbs_down", label="👎", value="down",   description="Mark as not helpful"),
+        cl.Action(name="export_chat", label="📥 Export", value="export", description="Export chat"),
+    ]
 
 
 # ── Report helpers ────────────────────────────────────────────────────────────
@@ -511,12 +517,13 @@ async def on_message(message: cl.Message) -> None:
             step.output = "Context assembled"
 
         # ── Stream response ───────────────────────────────────────────────────
-        out_msg = cl.Message(content="")
+        out_msg = cl.Message(content="", author="TARA")
         await out_msg.send()
         response = await _stream_into(prompt, out_msg)
 
-        # Attach feedback + export actions after streaming completes
-        out_msg.actions = _RESPONSE_ACTIONS
+        # Single final update: set content + actions together to avoid double-render.
+        out_msg.content = response
+        out_msg.actions = _make_actions()
         await out_msg.update()
 
     except Exception as exc:

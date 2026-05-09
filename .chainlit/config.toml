@@ -17,6 +17,9 @@ auto_scroll = true
 [UI]
 name = "TARA"
 description = "TIBCO AI Review Agent — Expert assistant for TIBCO BW, Flogo, EMS, and Messaging"
+favicon = "/public/tara_avatar.svg"
+logo = "/public/logo_light.svg"
+logo_dark = "/public/logo_dark.svg"
 
 # Show the readme as a welcome screen when the chat is empty
 show_readme_as_default = true
