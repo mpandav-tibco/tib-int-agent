@@ -75,6 +75,8 @@ class WebSource(KnowledgeSource):
             soup.find("main")
             or soup.find("article")
             or soup.find(id="content")
+            # MadCap Flare pages (TIBCO docs)
+            or soup.find(attrs={"class": "page-content"})
             or soup.find(attrs={"class": re.compile(r"(main|topic|article|content)[-_]?(content|body|text)?", re.I)})
             or soup.body
         )
