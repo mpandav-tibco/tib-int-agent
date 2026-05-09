@@ -10,7 +10,7 @@ from llama_index.llms.ollama import Ollama
 
 from tibco_agent.config import settings
 from tibco_agent.tools.registry import ToolRegistry
-from tibco_agent.tools.agent_tools import build_knowledge_tool, build_flogo_tool, build_log_tool
+from tibco_agent.tools.agent_tools import build_knowledge_tool, build_flogo_tool, build_log_tool, search_knowledge
 
 _SYSTEM_PROMPT = """\
 You are a TIBCO Integration expert assistant specializing in:
@@ -131,10 +131,17 @@ async def _ask_async(agent: ReActAgent, prompt: str) -> str:
 
 
 def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: str = "") -> str:
-    # Run analyzers eagerly when files are uploaded — injecting structured findings
-    # directly into the prompt is far more reliable than asking the LLM to call a
-    # tool, especially with smaller local models like llama3.1:8b.
+    # Eagerly retrieve relevant knowledge and inject it into the prompt.
+    # Small local models reliably read context; they don't reliably call tools.
     parts = [question]
+
+    kb = search_knowledge(question)
+    if kb:
+        parts.append(
+            "\n\n## Knowledge Base\n"
+            "_The following excerpts are retrieved from the TIBCO documentation knowledge base. "
+            "Use them as the primary source. Do not contradict them._\n\n" + kb
+        )
 
     intent = _classify_intent(question)
 

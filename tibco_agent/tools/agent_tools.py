@@ -39,6 +39,36 @@ def _get_embed_model() -> OllamaEmbedding:
     return _embed_model
 
 
+def search_knowledge(query: str) -> str:
+    """Eagerly query the TIBCO knowledge base. Returns empty string on any failure."""
+    try:
+        client = _get_weaviate_client()
+        class_name = settings.collection_name
+        existing = client.schema.get()
+        class_names = {c["class"] for c in existing.get("classes", [])}
+        if class_name not in class_names:
+            return ""
+        embed_model = _get_embed_model()
+        vector = embed_model.get_text_embedding(query)
+        result = (
+            client.query
+            .get(class_name, ["text", "file_name"])
+            .with_near_vector({"vector": vector})
+            .with_limit(5)
+            .do()
+        )
+        objects = result.get("data", {}).get("Get", {}).get(class_name, [])
+        if not objects:
+            return ""
+        parts = []
+        for i, obj in enumerate(objects, 1):
+            source = obj.get("file_name", "unknown")
+            parts.append(f"[Excerpt {i} — {source}]\n{obj['text']}")
+        return "\n\n---\n\n".join(parts)
+    except Exception:
+        return ""
+
+
 def build_knowledge_tool() -> FunctionTool:
     """
     Retrieval-only RAG tool — embeds the query with Ollama, runs a
