@@ -60,23 +60,30 @@ def _init_session_settings(force: bool = False) -> None:
     st.session_state._settings_seeded = True
 
 
-def _apply_settings() -> None:
-    """Push session-state values into the live settings object, clear the agent
-    cache (so it rebuilds with the new config on the next query), and persist
-    changes to .env so they survive a restart."""
+def _apply_settings() -> bool:
+    """Validate, push session-state values into the live settings object, clear
+    the agent cache, and persist to .env.  Returns False if validation fails."""
     import tibco_agent.config as _cfg
 
-    updates = {
-        "llm_model":       st.session_state.s_llm_model.strip(),
-        "embed_model":     st.session_state.s_embed_model.strip(),
-        "ollama_base_url": st.session_state.s_ollama_url.strip(),
-        "weaviate_url":    st.session_state.s_weaviate_url.strip(),
-        "collection_name": st.session_state.s_collection.strip(),
-        "request_timeout": float(st.session_state.s_timeout),
+    required_text = {
+        "llm_model":       ("LLM Model",       st.session_state.s_llm_model),
+        "embed_model":     ("Embed Model",      st.session_state.s_embed_model),
+        "ollama_base_url": ("Ollama URL",       st.session_state.s_ollama_url),
+        "weaviate_url":    ("Weaviate URL",     st.session_state.s_weaviate_url),
+        "collection_name": ("Collection Name",  st.session_state.s_collection),
     }
+    errors = [label for _, (label, val) in required_text.items() if not val.strip()]
+    if errors:
+        st.error(f"Cannot save — required fields are empty: {', '.join(errors)}")
+        return False
+
+    updates = {k: v.strip() for k, (_, v) in required_text.items()}
+    updates["request_timeout"] = float(st.session_state.s_timeout)
+
     _cfg.settings.apply(**updates)
-    _load_agent.clear()           # force agent rebuild on next query
+    _load_agent.clear()
     _persist_env(updates)
+    return True
 
 
 def _persist_env(updates: dict) -> None:
@@ -197,12 +204,12 @@ def main() -> None:
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("Apply & Rebuild", type="primary", use_container_width=True):
-                        _apply_settings()
-                        st.session_state._settings_edit_mode = False
-                        st.session_state._settings_expanded  = False
-                        st.toast("Settings saved — agent will rebuild on your next query.",
-                                 icon="✅")
-                        st.rerun()
+                        if _apply_settings():
+                            st.session_state._settings_edit_mode = False
+                            st.session_state._settings_expanded  = False
+                            st.toast("Settings saved — agent will rebuild on your next query.",
+                                     icon="✅")
+                            st.rerun()
                 with col2:
                     if st.button("Cancel", use_container_width=True):
                         _init_session_settings(force=True)   # discard edits

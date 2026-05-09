@@ -24,8 +24,10 @@ Your responsibilities:
 4. Provide performance tuning, troubleshooting, and architectural guidance
 
 Rules:
-- Always use the provided tools. Do not answer from memory for specific error codes, property names, or config values.
-- When reporting findings, cite the specific flow name, activity name, or log line number.
+- Always use the provided tools for knowledge lookups. Do not answer from memory for specific error codes, property names, or config values.
+- When the prompt already contains a "## Static Analysis Results" or "## Log Analysis Results" section, treat those findings as authoritative facts. Do NOT re-describe the app structure or log content — go straight to what needs to be fixed and why.
+- Structure your answer: lead with a one-line verdict, then list issues by severity (Errors first, then Warnings), then give concrete next steps.
+- Cite the specific flow name, activity name, or log line number for every issue.
 - Prioritize errors over warnings. Be concise and actionable.
 - If you are not confident, say so. Do not invent configuration values or API names.
 """
@@ -97,18 +99,31 @@ async def _ask_async(agent: ReActAgent, prompt: str) -> str:
 
 
 def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: str = "") -> str:
+    # Run analyzers eagerly when files are uploaded — injecting structured findings
+    # directly into the prompt is far more reliable than asking the LLM to call a
+    # tool, especially with smaller local models like llama3.1:8b.
     parts = [question]
 
     if flogo_content.strip():
+        from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
+        report = FlogoAnalyzer().analyze(flogo_content[:30000])
         parts.append(
-            "\n\nThe user provided a .flogo file. "
-            f"Call analyze_flogo_file with the following content:\n\n{flogo_content[:30000]}"
+            "\n\n## Static Analysis Results (uploaded .flogo file)\n\n"
+            + report.to_markdown()
+            + "\n\n---\nUsing the findings above, answer the user's question directly. "
+            "Lead with a verdict, then list issues by severity with flow/activity names. "
+            "Do NOT re-describe the app — focus on what needs fixing and how."
         )
 
     if log_content.strip():
+        from tibco_agent.analyzers.log_analyzer import LogAnalyzer
+        report = LogAnalyzer().analyze(log_content[:20000])
         parts.append(
-            "\n\nThe user provided a pod log. "
-            f"Call analyze_pod_log with the following content:\n\n{log_content[:20000]}"
+            "\n\n## Log Analysis Results (uploaded pod log)\n\n"
+            + report.to_markdown()
+            + "\n\n---\nUsing the findings above, answer the user's question directly. "
+            "Lead with root cause, then give concrete remediation steps with log line references. "
+            "Do NOT re-describe the log content."
         )
 
     loop = _get_loop()
