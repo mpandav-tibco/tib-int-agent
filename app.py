@@ -8,13 +8,15 @@ Run with:
 from __future__ import annotations
 
 import html as _html_escape
+import threading
+import time
 from pathlib import Path
 
 import markdown as _md
 import streamlit as st
 
 from tibco_agent.report.generator import to_html, to_pdf
-from tibco_agent.agent.core import PROVIDER_MODEL_HINTS
+from tibco_agent.agent.core import PROVIDER_MODEL_HINTS, build_prompt, call_llm
 
 # ── Chat avatar SVGs ──────────────────────────────────────────────────────────
 
@@ -22,30 +24,28 @@ _TARA_SVG = """
 <svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="th" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0d3a6b"/>
-      <stop offset="100%" stop-color="#020d1a"/>
+      <stop offset="0%" stop-color="#003865"/>
+      <stop offset="100%" stop-color="#001f40"/>
     </linearGradient>
   </defs>
   <polygon points="20,1 37.3,10.5 37.3,29.5 20,39 2.7,29.5 2.7,10.5"
-           fill="none" stroke="#0055bb" stroke-width="0.8" opacity="0.55"/>
+           fill="none" stroke="#4a90d9" stroke-width="0.8" opacity="0.5"/>
   <polygon points="20,3 35.4,12 35.4,28 20,37 4.6,28 4.6,12"
-           fill="url(#th)" stroke="#0077dd" stroke-width="1.5"/>
-  <line x1="7" y1="20" x2="33" y2="20" stroke="#0099ff" stroke-width="0.8" opacity="0.35"/>
-  <circle cx="20" cy="3.5" r="2" fill="#0099ff" opacity="0.85"/>
-  <circle cx="35.4" cy="12"  r="1.3" fill="#0066cc" opacity="0.55"/>
-  <circle cx="35.4" cy="28"  r="1.3" fill="#0066cc" opacity="0.55"/>
-  <circle cx="20"   cy="36.5" r="1.3" fill="#0066cc" opacity="0.55"/>
+           fill="url(#th)" stroke="#0057a8" stroke-width="1.5"/>
+  <circle cx="20" cy="3.5" r="2" fill="#0077cc" opacity="0.9"/>
+  <circle cx="35.4" cy="12"  r="1.3" fill="#0057a8" opacity="0.7"/>
+  <circle cx="35.4" cy="28"  r="1.3" fill="#0057a8" opacity="0.7"/>
+  <circle cx="20"   cy="36.5" r="1.3" fill="#0057a8" opacity="0.7"/>
   <text x="20" y="27" text-anchor="middle"
         font-size="16" font-weight="900"
-        font-family="Courier New,monospace" fill="#5bbeff">T</text>
+        font-family="Courier New,monospace" fill="#ffffff">T</text>
 </svg>"""
 
 _USER_SVG = """
 <svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
-  <circle cx="20" cy="20" r="19" fill="rgba(0,35,70,0.75)"
-          stroke="rgba(0,90,170,0.4)" stroke-width="1.5"/>
-  <circle cx="20" cy="14" r="7" fill="rgba(0,90,170,0.65)"/>
-  <path d="M4,37 Q4,25 20,25 Q36,25 36,37 Z" fill="rgba(0,90,170,0.65)"/>
+  <circle cx="20" cy="20" r="19" fill="#0057a8" stroke="#003865" stroke-width="1"/>
+  <circle cx="20" cy="14" r="7" fill="rgba(255,255,255,0.90)"/>
+  <path d="M4,37 Q4,25 20,25 Q36,25 36,37 Z" fill="rgba(255,255,255,0.90)"/>
 </svg>"""
 
 
@@ -71,6 +71,23 @@ def _chat_bubble_html(role: str, content: str) -> str:
 def _render_chat_msg(role: str, content: str) -> None:
     st.markdown(_chat_bubble_html(role, content), unsafe_allow_html=True)
 
+
+def _thinking_html(text: str, pct: int) -> str:
+    """Progress bubble shown while TARA works — live-updated via st.empty()."""
+    return (
+        '<div class="chat-row chat-tara">'
+        f'<div class="chat-avatar">{_TARA_SVG}</div>'
+        '<div class="chat-bubble chat-bubble-tara" style="min-width:260px;">'
+        f'<span class="chat-thinking">{_html_escape.escape(text)}</span>'
+        '<div style="margin-top:10px;background:#e8f0f8;border-radius:6px;height:5px;overflow:hidden;">'
+        f'<div style="background:linear-gradient(90deg,#003865,#0077cc);height:5px;border-radius:6px;'
+        f'width:{pct}%;transition:width 0.5s ease;box-shadow:0 0 6px rgba(0,87,168,0.35);"></div></div>'
+        f'<div style="text-align:right;font-size:0.72rem;color:#4a6080;margin-top:4px;font-weight:500;">'
+        f'{pct}%</div>'
+        '</div></div>'
+    )
+
+
 st.set_page_config(
     page_title="TARA — TIBCO AI Review Agent",
     page_icon="🔗",
@@ -79,152 +96,149 @@ st.set_page_config(
 
 _AGENTIC_CSS = """
 <style>
-/* ── Animated gradient background ─────────────────────────────────── */
+/* ── Clean professional background ────────────────────────────────── */
 .stApp {
-    background: linear-gradient(-45deg, #03060f, #060d1a, #0a1628, #071020);
-    background-size: 400% 400%;
-    animation: bgGradient 22s ease infinite;
+    background: linear-gradient(160deg, #eef3f9 0%, #e8f0f8 50%, #eef3f9 100%);
+    background-size: 200% 200%;
+    animation: bgShift 35s ease infinite;
 }
-@keyframes bgGradient {
-    0%   { background-position: 0% 50%; }
-    50%  { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
+@keyframes bgShift {
+    0%,100% { background-position: 0% 0%; }
+    50%      { background-position: 100% 100%; }
 }
 
-/* ── Dot-grid overlay ──────────────────────────────────────────────── */
+/* ── Subtle dot-grid overlay ───────────────────────────────────────── */
 .stApp > div:first-child::before {
     content: '';
     position: fixed;
     inset: 0;
-    background-image: radial-gradient(rgba(0,87,168,0.13) 1px, transparent 1px);
-    background-size: 38px 38px;
+    background-image: radial-gradient(rgba(0,56,101,0.055) 1px, transparent 1px);
+    background-size: 40px 40px;
     pointer-events: none;
     z-index: 0;
-}
-
-/* ── Ambient glow orbs ─────────────────────────────────────────────── */
-.stApp > div:first-child::after {
-    content: '';
-    position: fixed;
-    width: 700px; height: 700px;
-    background: radial-gradient(circle, rgba(0,87,168,0.09) 0%, transparent 68%);
-    top: -180px; right: -180px;
-    border-radius: 50%;
-    animation: orb 28s ease-in-out infinite;
-    pointer-events: none;
-    z-index: 0;
-}
-@keyframes orb {
-    0%, 100% { transform: translate(0,0) scale(1); }
-    33%       { transform: translate(-70px, 90px) scale(1.06); }
-    66%       { transform: translate(50px, -70px) scale(0.94); }
 }
 
 /* ── Sidebar ───────────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
-    background: rgba(4, 9, 20, 0.88) !important;
-    border-right: 1px solid rgba(0,87,168,0.22) !important;
-    backdrop-filter: blur(14px);
-    box-shadow: 4px 0 32px rgba(0,40,90,0.45);
+    background: #ffffff !important;
+    border-right: 1px solid #d0dff0 !important;
+    box-shadow: 2px 0 18px rgba(0,56,101,0.08);
 }
 
 /* ── Main content area ─────────────────────────────────────────────── */
 .block-container { background: transparent !important; }
 
-/* ── Chat messages ─────────────────────────────────────────────────── */
-[data-testid="stChatMessage"] {
-    background: rgba(8,18,36,0.55) !important;
-    border: 1px solid rgba(0,87,168,0.17) !important;
-    border-radius: 14px !important;
-    backdrop-filter: blur(10px);
-    box-shadow: 0 4px 28px rgba(0,0,0,0.35);
-    transition: border-color 0.25s ease, box-shadow 0.25s ease;
+/* ── Sidebar labels & text ─────────────────────────────────────────── */
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span {
+    color: #1a2740 !important;
 }
-[data-testid="stChatMessage"]:hover {
-    border-color: rgba(0,87,168,0.38) !important;
-    box-shadow: 0 4px 32px rgba(0,87,168,0.15);
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    color: #003865 !important;
 }
 
 /* ── Chat input ────────────────────────────────────────────────────── */
 [data-testid="stChatInputContainer"] {
-    background: rgba(6,13,26,0.82) !important;
-    border: 1px solid rgba(0,87,168,0.28) !important;
-    border-radius: 14px !important;
-    backdrop-filter: blur(12px);
-    box-shadow: 0 0 24px rgba(0,87,168,0.12);
+    background: #ffffff !important;
+    border: 1.5px solid #b8d0e8 !important;
+    border-radius: 16px !important;
+    box-shadow: 0 4px 20px rgba(0,56,101,0.10);
 }
 [data-testid="stChatInputContainer"] textarea {
     font-size: 1.05rem !important;
     min-height: 54px !important;
     line-height: 1.6 !important;
-    color: #d0e8ff !important;
+    color: #1a2740 !important;
+    background: transparent !important;
 }
 [data-testid="stChatInputContainer"] textarea::placeholder {
-    color: rgba(130,180,240,0.55) !important;
+    color: rgba(0,56,101,0.38) !important;
     font-size: 1.05rem !important;
 }
 
 /* ── Buttons ───────────────────────────────────────────────────────── */
 .stButton > button {
-    background: rgba(0,40,80,0.38) !important;
-    border: 1px solid rgba(0,87,168,0.32) !important;
-    color: #c2d9f8 !important;
+    background: #ffffff !important;
+    border: 1.5px solid #b8d0e8 !important;
+    color: #003865 !important;
     border-radius: 8px !important;
+    font-weight: 500 !important;
     transition: all 0.2s ease !important;
-    backdrop-filter: blur(6px);
 }
 .stButton > button:hover {
-    background: rgba(0,87,168,0.50) !important;
-    border-color: rgba(0,140,255,0.6) !important;
-    box-shadow: 0 0 18px rgba(0,87,168,0.45) !important;
+    background: #0057a8 !important;
+    border-color: #0057a8 !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 16px rgba(0,87,168,0.22) !important;
     transform: translateY(-1px);
-    color: #fff !important;
 }
 .stButton > button[kind="primary"] {
     background: linear-gradient(135deg, #0057a8 0%, #003865 100%) !important;
-    border: 1px solid rgba(0,140,255,0.4) !important;
-    box-shadow: 0 0 22px rgba(0,87,168,0.35) !important;
+    border: none !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 16px rgba(0,87,168,0.28) !important;
+}
+.stButton > button[kind="primary"]:hover {
+    background: linear-gradient(135deg, #0066cc 0%, #004a80 100%) !important;
+    color: #ffffff !important;
 }
 
-/* ── Text inputs / sliders ─────────────────────────────────────────── */
+/* ── Text inputs ───────────────────────────────────────────────────── */
 .stTextInput > div > div > input,
 .stTextArea > div > div > textarea {
-    background: rgba(4,9,20,0.75) !important;
-    border: 1px solid rgba(0,87,168,0.25) !important;
-    color: #c2d9f8 !important;
+    background: #ffffff !important;
+    border: 1.5px solid #c8ddf0 !important;
+    color: #1a2740 !important;
     border-radius: 8px !important;
 }
 .stTextInput > div > div > input:focus {
-    border-color: rgba(0,140,255,0.55) !important;
-    box-shadow: 0 0 12px rgba(0,87,168,0.25) !important;
+    border-color: #0057a8 !important;
+    box-shadow: 0 0 0 3px rgba(0,87,168,0.10) !important;
+}
+
+/* ── Select boxes ──────────────────────────────────────────────────── */
+[data-testid="stSelectbox"] > div > div {
+    background: #ffffff !important;
+    border: 1.5px solid #c8ddf0 !important;
+    color: #1a2740 !important;
+    border-radius: 8px !important;
+}
+
+/* ── Sliders ───────────────────────────────────────────────────────── */
+[data-testid="stSlider"] [data-baseweb="slider"] [data-testid="stThumbValue"] {
+    color: #003865 !important;
 }
 
 /* ── Expanders ─────────────────────────────────────────────────────── */
 details > summary,
 .streamlit-expanderHeader {
-    background: rgba(6,13,26,0.55) !important;
-    border: 1px solid rgba(0,87,168,0.2) !important;
+    background: #f5f8fc !important;
+    border: 1px solid #d0dff0 !important;
     border-radius: 10px !important;
-    color: #c2d9f8 !important;
+    color: #003865 !important;
 }
 
-/* ── Info / success / warning cards ───────────────────────────────── */
+/* ── Info / success / warning alerts ──────────────────────────────── */
 [data-testid="stNotification"],
 div[class*="stAlert"] {
-    background: rgba(0,40,80,0.25) !important;
-    border: 1px solid rgba(0,87,168,0.22) !important;
+    background: #f0f6ff !important;
+    border: 1px solid #c0d8f0 !important;
     border-radius: 10px !important;
-    backdrop-filter: blur(8px);
+    color: #1a2740 !important;
 }
+div[data-testid="stSuccess"] { border-left: 4px solid #0057a8 !important; }
 
 /* ── Dividers ──────────────────────────────────────────────────────── */
-hr { border-color: rgba(0,87,168,0.18) !important; }
+hr { border-color: #d0dff0 !important; }
 
 /* ── Scrollbar ─────────────────────────────────────────────────────── */
 ::-webkit-scrollbar              { width: 5px; height: 5px; }
-::-webkit-scrollbar-track        { background: rgba(4,9,20,0.4); }
-::-webkit-scrollbar-thumb        { background: rgba(0,87,168,0.38); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover  { background: rgba(0,120,220,0.65); }
+::-webkit-scrollbar-track        { background: #eef3f9; }
+::-webkit-scrollbar-thumb        { background: #b8d0e8; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover  { background: #0057a8; }
 
 /* ── Custom chat layout ────────────────────────────────────────────── */
 .chat-row {
@@ -246,56 +260,59 @@ hr { border-color: rgba(0,87,168,0.18) !important; }
     word-break: break-word;
 }
 .chat-bubble-user {
-    background: rgba(0,45,100,0.5);
-    border: 1px solid rgba(0,110,200,0.35);
+    background: linear-gradient(135deg, #0057a8 0%, #003865 100%);
     border-radius: 18px 4px 18px 18px;
-    color: #d0e8ff;
+    color: #ffffff;
+    box-shadow: 0 3px 14px rgba(0,87,168,0.22);
 }
 .chat-bubble-tara {
-    background: rgba(6,14,32,0.65);
-    border: 1px solid rgba(0,87,168,0.25);
+    background: #ffffff;
+    border: 1px solid #d0dff0;
     border-radius: 4px 18px 18px 18px;
-    color: #c0ddf8;
-    backdrop-filter: blur(6px);
+    color: #1a2740;
+    box-shadow: 0 2px 10px rgba(0,56,101,0.07);
 }
-/* TARA bubble markdown styles */
+/* TARA bubble markdown */
 .chat-bubble-tara h2,.chat-bubble-tara h3 {
-    color: #5bbeff; border-bottom: 1px solid rgba(0,87,168,0.25);
+    color: #003865; border-bottom: 1px solid #d0dff0;
     padding-bottom: 4px; margin: 12px 0 6px;
 }
-.chat-bubble-tara h4 { color: #7acfff; margin: 8px 0 4px; }
-.chat-bubble-tara strong { color: #90d0ff; font-weight: 600; }
+.chat-bubble-tara h4 { color: #0057a8; margin: 8px 0 4px; }
+.chat-bubble-tara strong { color: #003865; font-weight: 600; }
 .chat-bubble-tara code {
-    background: rgba(0,20,50,0.7); color: #60c4ff;
-    border-radius: 4px; padding: 2px 6px;
-    font-size: 0.87em; font-family: 'Courier New', monospace;
+    background: #eef3f9; color: #0057a8;
+    border: 1px solid #d0dff0; border-radius: 4px;
+    padding: 2px 6px; font-size: 0.87em; font-family: 'Courier New', monospace;
 }
 .chat-bubble-tara pre {
-    background: rgba(2,8,20,0.8); border: 1px solid rgba(0,87,168,0.25);
+    background: #f5f8fc; border: 1px solid #d0dff0;
     border-radius: 8px; padding: 12px 14px; overflow-x: auto; margin: 8px 0;
 }
-.chat-bubble-tara pre code { background: none; padding: 0; color: #a0d4ff; }
+.chat-bubble-tara pre code { background: none; padding: 0; color: #003865; border: none; }
 .chat-bubble-tara table {
     border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 0.87rem;
 }
 .chat-bubble-tara th {
-    background: rgba(0,56,101,0.5); padding: 6px 10px;
-    border: 1px solid rgba(0,87,168,0.3); color: #90d0ff;
+    background: #003865; padding: 6px 10px;
+    border: 1px solid #b8d0e8; color: #ffffff;
 }
-.chat-bubble-tara td { padding: 5px 10px; border: 1px solid rgba(0,87,168,0.2); }
-.chat-bubble-tara tr:nth-child(even) { background: rgba(0,30,60,0.2); }
+.chat-bubble-tara td { padding: 5px 10px; border: 1px solid #d0dff0; color: #1a2740; }
+.chat-bubble-tara tr:nth-child(even) { background: #f5f8fc; }
 .chat-bubble-tara ul,.chat-bubble-tara ol { padding-left: 18px; margin: 6px 0; }
 .chat-bubble-tara li { margin: 4px 0; }
 .chat-bubble-tara blockquote {
-    border-left: 3px solid rgba(0,140,255,0.5); margin: 8px 0;
-    padding: 4px 12px; background: rgba(0,40,80,0.2); border-radius: 0 6px 6px 0;
+    border-left: 3px solid #0057a8; margin: 8px 0;
+    padding: 4px 12px; background: #f0f6ff; border-radius: 0 6px 6px 0;
+    color: #003865;
 }
-/* TARA thinking animation */
-.chat-thinking { font-style: italic; color: #7aafd4;
-    animation: thinkPulse 1.4s ease-in-out infinite; }
+/* Thinking animation */
+.chat-thinking {
+    font-style: italic; color: #0057a8;
+    animation: thinkPulse 1.4s ease-in-out infinite;
+}
 @keyframes thinkPulse {
-    0%,100% { opacity: 0.4; }
-    50%     { opacity: 1;   }
+    0%,100% { opacity: 0.45; }
+    50%      { opacity: 1; }
 }
 </style>
 """
@@ -492,16 +509,16 @@ def main() -> None:
     position: absolute;
     inset: 0;
     border-radius: 50%;
-    border: 2px dashed rgba(0,140,255,0.45);
+    border: 2px dashed rgba(0,87,168,0.40);
     animation: spinCW 14s linear infinite;
 }
 /* Three node dots on the outer ring */
 .m-node {
     position: absolute;
     width: 9px; height: 9px;
-    background: #0099ff;
+    background: #0057a8;
     border-radius: 50%;
-    box-shadow: 0 0 10px #0099ff, 0 0 20px rgba(0,153,255,0.4);
+    box-shadow: 0 0 8px rgba(0,87,168,0.6), 0 0 16px rgba(0,87,168,0.25);
 }
 .m-node-1 { top: -4px;  left: calc(50% - 4px); }
 .m-node-2 { bottom: -4px; left: calc(50% - 4px); }
@@ -511,15 +528,15 @@ def main() -> None:
     position: absolute;
     inset: 24px;
     border-radius: 50%;
-    border: 1px dashed rgba(0,87,168,0.5);
+    border: 1px dashed rgba(0,56,101,0.45);
     animation: spinCCW 9s linear infinite;
 }
 .m-node-inner {
     position: absolute;
     width: 6px; height: 6px;
-    background: #60b4ff;
+    background: #003865;
     border-radius: 50%;
-    box-shadow: 0 0 6px #60b4ff;
+    box-shadow: 0 0 5px rgba(0,56,101,0.5);
     top: -3px; left: calc(50% - 3px);
 }
 /* Ambient core glow */
@@ -527,7 +544,7 @@ def main() -> None:
     position: absolute;
     inset: 36px;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(0,140,255,0.22) 0%, transparent 70%);
+    background: radial-gradient(circle, rgba(0,87,168,0.15) 0%, transparent 70%);
     animation: glowPulse 3s ease-in-out infinite;
 }
 /* Hexagonal AI core */
@@ -576,7 +593,7 @@ def main() -> None:
     position: absolute;
     left: 40px; right: 40px;
     height: 2px;
-    background: linear-gradient(90deg, transparent, rgba(0,220,255,0.8), transparent);
+    background: linear-gradient(90deg, transparent, rgba(0,87,168,0.7), transparent);
     top: 40px;
     animation: scanLine 2.5s ease-in-out infinite;
     filter: blur(0.5px);
@@ -590,12 +607,12 @@ def main() -> None:
 @keyframes spinCW   { to { transform: rotate( 360deg); } }
 @keyframes spinCCW  { to { transform: rotate(-360deg); } }
 @keyframes glowPulse {
-    0%,100% { opacity: 0.5; transform: scale(1);   }
-    50%     { opacity: 1;   transform: scale(1.12); }
+    0%,100% { opacity: 0.4; transform: scale(1);   }
+    50%     { opacity: 0.85; transform: scale(1.10); }
 }
 @keyframes hexGlow {
-    0%,100% { filter: drop-shadow(0 0 6px  rgba(0,140,255,0.4)); }
-    50%     { filter: drop-shadow(0 0 16px rgba(0,180,255,0.85)); }
+    0%,100% { filter: drop-shadow(0 0 5px  rgba(0,87,168,0.30)); }
+    50%     { filter: drop-shadow(0 0 14px rgba(0,87,168,0.65)); }
 }
 
 /* ── Title ────────────────────────────────────────────────────── */
@@ -603,7 +620,7 @@ def main() -> None:
     text-align: center;
     font-size: 3.8rem;
     font-weight: 900;
-    background: linear-gradient(135deg, #c8e8ff 0%, #60b4ff 35%, #0088ff 65%, #e0f2ff 100%);
+    background: linear-gradient(135deg, #002a55 0%, #0057a8 40%, #0077cc 70%, #003865 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -613,8 +630,8 @@ def main() -> None:
     animation: titleGlow 4s ease-in-out infinite;
 }
 @keyframes titleGlow {
-    0%,100% { filter: drop-shadow(0 0 8px  rgba(0,140,255,0.25)); }
-    50%     { filter: drop-shadow(0 0 22px rgba(0,180,255,0.65)); }
+    0%,100% { filter: drop-shadow(0 0 6px  rgba(0,87,168,0.20)); }
+    50%     { filter: drop-shadow(0 0 18px rgba(0,87,168,0.50)); }
 }
 
 /* ── Status bar ───────────────────────────────────────────────── */
@@ -623,22 +640,22 @@ def main() -> None:
     align-items: center;
     justify-content: center;
     gap: 8px;
-    color: #6a9fc8;
+    color: #4a6e90;
     font-size: 0.78rem;
     letter-spacing: 0.9px;
     text-transform: uppercase;
 }
 .status-dot {
     width: 8px; height: 8px;
-    background: #00e676;
+    background: #0ea56e;
     border-radius: 50%;
     flex-shrink: 0;
     animation: dotPulse 2s ease-in-out infinite;
-    box-shadow: 0 0 8px #00e676;
+    box-shadow: 0 0 6px #0ea56e;
 }
 @keyframes dotPulse {
-    0%,100% { box-shadow: 0 0 5px #00e676; opacity: 1; }
-    50%     { box-shadow: 0 0 16px #00e676, 0 0 30px rgba(0,230,118,0.3); opacity: 0.65; }
+    0%,100% { box-shadow: 0 0 4px #0ea56e; opacity: 1; }
+    50%     { box-shadow: 0 0 12px #0ea56e, 0 0 22px rgba(14,165,110,0.22); opacity: 0.65; }
 }
 </style>
 
@@ -664,7 +681,7 @@ def main() -> None:
   </div>
 
   <div class="agent-title">TARA</div>
-  <div style="text-align:center; color:#5a90be; font-size:0.95rem; letter-spacing:3px; text-transform:uppercase; margin-bottom:10px; font-weight:500;">
+  <div style="text-align:center; color:#4a6e90; font-size:0.95rem; letter-spacing:3px; text-transform:uppercase; margin-bottom:10px; font-weight:500;">
     TIBCO AI Review Agent
   </div>
   <div class="agent-status">
@@ -911,20 +928,48 @@ def main() -> None:
         st.session_state.messages.append({"role": "user", "content": user_input})
         _render_chat_msg("user", user_input)
 
-        # Show animated TARA thinking placeholder
         tara_slot = st.empty()
-        tara_slot.markdown(
-            '<div class="chat-row chat-tara">'
-            f'<div class="chat-avatar">{_TARA_SVG}</div>'
-            '<div class="chat-bubble chat-bubble-tara chat-thinking">'
-            'TARA is thinking…</div></div>',
-            unsafe_allow_html=True,
-        )
+
+        def _update(text: str, pct: int) -> None:
+            tara_slot.markdown(_thinking_html(text, pct), unsafe_allow_html=True)
+
+        _update("Initializing…", 5)
 
         try:
             agent = _load_agent()
-            from tibco_agent.agent.core import ask
-            response = ask(agent, user_input, flogo_content, log_content)
+
+            # Phase 1 — build prompt with live step updates (runs in main thread)
+            prompt = build_prompt(
+                user_input, flogo_content, log_content,
+                on_step=_update,
+            )
+
+            # Phase 2 — LLM call in background thread; poll with fake progress
+            result_holder: list[str | None] = [None]
+            error_holder:  list[BaseException | None] = [None]
+
+            def _run_llm() -> None:
+                try:
+                    result_holder[0] = call_llm(agent, prompt)
+                except BaseException as exc:  # noqa: BLE001
+                    error_holder[0] = exc
+
+            llm_thread = threading.Thread(target=_run_llm, daemon=True)
+            llm_thread.start()
+
+            pct = 65
+            while llm_thread.is_alive():
+                time.sleep(1.2)
+                pct = min(pct + 2, 93)
+                _update("Waiting for LLM response…", pct)
+
+            llm_thread.join()
+            _update("Finalizing…", 99)
+
+            if error_holder[0] is not None:
+                raise error_holder[0]
+            response = result_holder[0] or ""
+
         except RuntimeError as e:
             response = (
                 f"**Setup required:** {e}\n\n"

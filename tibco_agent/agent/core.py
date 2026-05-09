@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
+from typing import Callable
 
 from llama_index.core import Settings
 from llama_index.core.agent import ReActAgent
@@ -187,11 +188,17 @@ async def _ask_async(agent: ReActAgent, prompt: str) -> str:
     return str(result)
 
 
-def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: str = "") -> str:
-    # Eagerly retrieve relevant knowledge and inject it into the prompt.
-    # Small local models reliably read context; they don't reliably call tools.
+def build_prompt(
+    question: str,
+    flogo_content: str = "",
+    log_content: str = "",
+    on_step: Callable[[str, int], None] | None = None,
+) -> str:
+    """Assemble the full LLM prompt.  on_step(message, pct) is called at each stage."""
+    _step = on_step or (lambda _msg, _pct: None)
     parts = [question]
 
+    _step("Searching knowledge base…", 15)
     kb = search_knowledge(question)
     if kb:
         parts.append(
@@ -208,6 +215,7 @@ def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: 
     intent = _classify_intent(question)
 
     if flogo_content.strip():
+        _step("Analyzing application…", 40)
         from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
         report = FlogoAnalyzer().analyze(flogo_content)
         if intent == "review":
@@ -232,6 +240,7 @@ def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: 
         parts.append("\n\n" + report.to_markdown() + suffix)
 
     if log_content.strip():
+        _step("Analyzing logs…", 55)
         from tibco_agent.analyzers.log_analyzer import LogAnalyzer
         report = LogAnalyzer().analyze(log_content)
         if intent == "review":
@@ -248,6 +257,17 @@ def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: 
             )
         parts.append("\n\n" + report.to_markdown() + log_suffix)
 
+    _step("Sending to LLM…", 65)
+    return "\n".join(parts)
+
+
+def call_llm(agent: ReActAgent, prompt: str) -> str:
+    """Run a pre-built prompt through the agent LLM."""
     loop = _get_loop()
-    future = asyncio.run_coroutine_threadsafe(_ask_async(agent, "\n".join(parts)), loop)
+    future = asyncio.run_coroutine_threadsafe(_ask_async(agent, prompt), loop)
     return _clean_response(future.result(timeout=600))
+
+
+def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: str = "") -> str:
+    prompt = build_prompt(question, flogo_content, log_content)
+    return call_llm(agent, prompt)
