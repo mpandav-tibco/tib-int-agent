@@ -243,4 +243,133 @@ DEFAULT_PATTERNS: list[LogPattern] = [
            "Run with a minimal test payload to isolate which activity panics",
        ],
        tags=["flogo", "panic", "runtime"]),
+
+    _p("HTTP-001",
+       r"(?:status|statusCode|response)[:\s]+5\d\d|50[0-9]\s+(?:Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)",
+       "any", "HTTP 5xx Response from Downstream",
+       root_causes=[
+           "Downstream service is throwing internal errors or is overloaded",
+           "Database query failure propagated as HTTP 500 from the backend",
+           "Target service is restarting or behind a misconfigured load balancer",
+       ],
+       fixes=[
+           "Identify which downstream URL returned 5xx from the stack trace above this line",
+           "Check the downstream service health dashboard and its own error logs",
+           "Add retry with exponential backoff for transient 5xx (502, 503, 504)",
+           "Return a structured 503 with Retry-After to callers rather than propagating raw 500",
+       ],
+       tags=["http", "downstream", "5xx"]),
+
+    _p("HTTP-002",
+       r"429 Too Many Requests|rate.?limit(?:ed|ing).*exceed|quota.*exceed|throttl(?:ed|ing)",
+       "any", "Rate Limiting / Quota Exceeded",
+       root_causes=[
+           "API call rate exceeds provider quota (requests per minute or per day)",
+           "Burst of concurrent flows hammering the same downstream endpoint",
+           "API key shared across multiple environments hitting combined quota",
+       ],
+       fixes=[
+           "Implement token-bucket or leaky-bucket rate limiting before the outbound call",
+           "Add exponential backoff with jitter when HTTP 429 is received",
+           "Use separate API keys per environment (dev / staging / prod)",
+           "Cache read responses where freshness allows to reduce API call frequency",
+       ],
+       tags=["http", "rate-limit", "quota"]),
+
+    _p("SSL-001",
+       r"certificate.*expired|x509: certificate has expired|SSL.*expired|TLS.*expired|cert.*not yet valid",
+       "any", "SSL/TLS Certificate Expired",
+       root_causes=[
+           "Server certificate has passed its expiry date",
+           "Certificate renewal was missed — no automated renewal process",
+           "Intermediate CA certificate in the trust chain has expired",
+       ],
+       fixes=[
+           "Renew the certificate immediately — check issuer dashboard or cert-manager status",
+           "kubectl describe certificate  — check cert-manager Certificate resource status",
+           "Set up automated renewal: cert-manager + Let's Encrypt for public endpoints",
+           "Monitor expiry with an alert triggered at < 30 days remaining",
+       ],
+       severity="ERROR",
+       tags=["ssl", "tls", "certificate", "security"]),
+
+    _p("SSL-002",
+       r"SSL.*handshake.*fail|TLS.*handshake.*fail|x509: certificate signed by unknown|tls: bad certificate|handshake.*timeout",
+       "any", "SSL/TLS Handshake Failure",
+       root_causes=[
+           "Server certificate is self-signed and not in the client trust store",
+           "TLS version mismatch between client and server (e.g., server requires TLS 1.2+)",
+           "Hostname in the request does not match any Subject Alternative Name in the certificate",
+           "Transparent proxy stripping TLS and injecting its own certificate",
+       ],
+       fixes=[
+           "Import the server CA certificate into the trust store (Flogo: SSL shared resource; BW: SSL client config)",
+           "Ensure TLS 1.2+ is required on both sides — disable TLS 1.0 and 1.1",
+           "Verify the certificate's Subject Alternative Names include the hostname being called",
+           "Never set skipSSLVerification=true — diagnose the trust chain instead",
+       ],
+       tags=["ssl", "tls", "certificate", "security"]),
+
+    _p("BW-005",
+       r"[Pp]rocess.*stuck|deadlock.*detect|blocked.*waiting|stuck.*process|checkpoint.*timeout|waiting.*checkpoint",
+       "bw", "BW Process Stuck / Deadlocked",
+       root_causes=[
+           "Activity waiting on an unavailable resource (database, EMS queue, file lock)",
+           "Checkpoint activity waiting for an ACK from a failed or unreachable EMS destination",
+           "Shared variable lock held by a crashed process instance that never released it",
+       ],
+       fixes=[
+           "TIBCO Administrator > Monitoring > Process Instances — look for instances in Waiting state",
+           "Kill the stuck instance and investigate why the downstream resource was unavailable",
+           "Increase the activity timeout so the process fails fast instead of hanging",
+           "Enable BW process monitoring alerts on instances older than your SLA threshold",
+       ],
+       tags=["bw", "stuck", "deadlock", "performance"]),
+
+    _p("KAFKA-001",
+       r"LEADER_NOT_AVAILABLE|kafka.*connection.*refused|kafka.*bootstrap.*fail|kafka.*metadata.*fetch|kafka.*broker.*unavailable",
+       "any", "Kafka Broker Unreachable",
+       root_causes=[
+           "Kafka broker is down or DNS for bootstrap servers is not resolving",
+           "NetworkPolicy blocks egress from the pod to Kafka ports (9092/9094)",
+           "Topic does not exist on the broker and auto-create is disabled",
+       ],
+       fixes=[
+           "kubectl exec -it <pod> -- nc -zv <kafka-host> 9092  — verify TCP reachability",
+           "Verify bootstrap.servers matches the actual broker DNS or service name in the cluster",
+           "Check NetworkPolicy allows egress from the pod to Kafka ports 9092 (plain) and 9094 (TLS)",
+           "Create the topic manually if auto.create.topics.enable=false on the cluster",
+       ],
+       tags=["kafka", "messaging", "connectivity"]),
+
+    _p("EMS-001",
+       r"EMS.*auth.*fail|EMS.*[Aa]uthorization.*[Dd]enied|TIBCO-BW-EMS.*auth|principal.*not allowed|EMS.*[Ll]ogin.*fail",
+       "any", "EMS Authentication / Authorization Failure",
+       root_causes=[
+           "Wrong username or password in the EMS connection shared resource",
+           "EMS user lacks PUBLISH or SUBSCRIBE permission on the destination",
+           "EMS user account has been locked, disabled, or deleted",
+       ],
+       fixes=[
+           "Verify credentials in the EMS shared resource match those in tibemsd.conf or the LDAP backing store",
+           "In the EMS administration tool: check ACL grants for the user on the queue/topic",
+           "kubectl get secret  — confirm the EMS credentials Secret is mounted and up to date",
+           "Test connectivity: tibemsadmin -server tcp://<host>:7222 -user <user> -password <pass>",
+       ],
+       tags=["ems", "messaging", "authentication", "security"]),
+
+    _p("FLOGO-RT-002",
+       r"address already in use|bind: address already in use|EADDRINUSE",
+       "flogo", "Port Already in Use at Startup",
+       root_causes=[
+           "Two Flogo containers or processes on the same node attempting to bind the same port",
+           "Previous pod not yet fully terminated when the replacement started binding",
+           "hostPort specified in the K8s deployment spec — this binds directly to the node",
+       ],
+       fixes=[
+           "Remove hostPort from the K8s deployment spec — expose through a ClusterIP Service instead",
+           "Add terminationGracePeriodSeconds (≥ 30s) so the old pod releases the port before the new one starts",
+           "Use readiness probes so the new pod only receives traffic after the trigger is fully bound",
+       ],
+       tags=["flogo", "networking", "startup"]),
 ]

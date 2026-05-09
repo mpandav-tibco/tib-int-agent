@@ -379,3 +379,192 @@ class ApiVersioningRule(Rule):
                     recommendation="",
                 )]
         return []
+
+
+class TimeoutConfiguredRule(Rule):
+    id = "FLOGO-P006"
+    severity = Severity.GOOD
+    category = "reliability"
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        http_tasks = [
+            t for flow in ctx.flows for t in flow.tasks
+            if _matches(t.activity_ref, _HTTP_REFS)
+        ]
+        if not http_tasks:
+            return []
+        all_have_timeout = all(
+            (t.input.get("timeout") or t.settings.get("timeout"))
+            for t in http_tasks
+        )
+        if all_have_timeout:
+            return [Finding(
+                rule_id=self.id, severity=self.severity,
+                title="All HTTP activities have timeouts configured",
+                location="all HTTP activities",
+                message=(
+                    f"All {len(http_tasks)} HTTP activity/activities have explicit timeout "
+                    "values — prevents hanging threads under sustained load."
+                ),
+                recommendation="",
+            )]
+        return []
+
+
+# ── New issue rules ───────────────────────────────────────────────────────────
+
+class HttpRetryRule(Rule):
+    id = "FLOGO-007"
+    severity = Severity.WARNING
+    category = "reliability"
+    tags = ["http", "retry", "resilience"]
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        findings = []
+        for flow in ctx.flows:
+            for task in flow.tasks:
+                if not _matches(task.activity_ref, _HTTP_REFS):
+                    continue
+                has_retry = (
+                    task.settings.get("retryCount")
+                    or task.settings.get("retry")
+                    or task.input.get("retryCount")
+                    or task.input.get("maxRetries")
+                )
+                if not has_retry:
+                    findings.append(Finding(
+                        rule_id=self.id,
+                        severity=self.severity,
+                        title="HTTP Activity — No Retry Logic",
+                        location=f"flow:{flow.name} / activity:{task.name}",
+                        message=(
+                            "No retry configuration found. Transient network failures "
+                            "surface as immediate errors with no recovery attempt."
+                        ),
+                        recommendation=(
+                            "Set retryCount=3 and retryDelay=1000ms on the REST activity, "
+                            "or wrap the call in a Flogo repeat loop with exponential backoff."
+                        ),
+                        tags=self.tags,
+                    ))
+        return findings
+
+
+_CREDENTIAL_HEADER_NAMES = frozenset({
+    "authorization", "x-api-key", "x-auth-token", "x-access-token",
+    "x-secret", "x-password", "api-key",
+})
+
+
+class HardcodedCredentialRule(Rule):
+    id = "FLOGO-008"
+    severity = Severity.ERROR
+    category = "security"
+    tags = ["security", "credentials", "secret"]
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        findings = []
+        for flow in ctx.flows:
+            for task in flow.tasks:
+                if not _matches(task.activity_ref, _HTTP_REFS):
+                    continue
+                headers = task.input.get("headers", {})
+                if not isinstance(headers, dict):
+                    continue
+                for hdr_name, hdr_val in headers.items():
+                    val_str = str(hdr_val or "")
+                    # Only flag literal values — $activity, $env, $property references are safe
+                    if (
+                        hdr_name.lower() in _CREDENTIAL_HEADER_NAMES
+                        and val_str
+                        and not val_str.startswith("$")
+                        and len(val_str) > 4
+                    ):
+                        findings.append(Finding(
+                            rule_id=self.id,
+                            severity=self.severity,
+                            title="Hardcoded Credential in HTTP Header",
+                            location=f"flow:{flow.name} / activity:{task.name}",
+                            message=(
+                                f"Header `{hdr_name}` contains a literal value that looks like "
+                                "a hardcoded credential. Literal secrets in .flogo files are "
+                                "committed to source control and visible in the container image."
+                            ),
+                            recommendation=(
+                                "Move credentials to Flogo app properties: `$property[API_TOKEN]`. "
+                                "In Kubernetes, back the property with a Secret resource."
+                            ),
+                            tags=self.tags,
+                        ))
+        return findings
+
+
+class LargeFlowRule(Rule):
+    id = "FLOGO-009"
+    severity = Severity.WARNING
+    category = "complexity"
+    tags = ["complexity", "maintainability", "flow-design"]
+    _MAX_TASKS = 15
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        findings = []
+        for flow in ctx.flows:
+            count = len(flow.tasks)
+            if count > self._MAX_TASKS:
+                findings.append(Finding(
+                    rule_id=self.id,
+                    severity=self.severity,
+                    title="Oversized Flow",
+                    location=f"flow:{flow.name}",
+                    message=(
+                        f"Flow has {count} activities (threshold: {self._MAX_TASKS}). "
+                        "Large monolithic flows are hard to unit-test, debug, and maintain."
+                    ),
+                    recommendation=(
+                        "Decompose by responsibility: validation → transformation → "
+                        "backend call → response mapping. Each subflow should have a single purpose."
+                    ),
+                    tags=self.tags,
+                ))
+        return findings
+
+
+class MissingCorrelationIdRule(Rule):
+    id = "FLOGO-010"
+    severity = Severity.INFO
+    category = "observability"
+    tags = ["observability", "tracing", "correlation"]
+
+    _CORRELATION_KEYS = frozenset({
+        "x-correlation-id", "x-request-id", "x-trace-id", "traceid",
+        "correlationid", "correlation_id", "x-b3-traceid", "x-request-id",
+    })
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        for flow in ctx.flows:
+            for task in flow.tasks:
+                headers = task.input.get("headers", {})
+                if isinstance(headers, dict):
+                    for k in headers:
+                        if k.lower() in self._CORRELATION_KEYS:
+                            return []
+                # Also check string representation of all input/settings
+                combined = str(task.input).lower() + str(task.settings).lower()
+                if any(k in combined for k in self._CORRELATION_KEYS):
+                    return []
+        return [Finding(
+            rule_id=self.id,
+            severity=self.severity,
+            title="No Correlation ID Propagation",
+            location="all flows",
+            message=(
+                "No correlation/trace header (X-Correlation-ID, X-Request-ID) found "
+                "in any HTTP activity. Without this, requests cannot be traced across services."
+            ),
+            recommendation=(
+                "Extract X-Correlation-ID from the trigger input headers and forward it on all "
+                "outbound REST calls. Generate a UUID if absent: "
+                "`coalesce($trigger.output.headers['X-Correlation-ID'], uuid())`."
+            ),
+            tags=self.tags,
+        )]

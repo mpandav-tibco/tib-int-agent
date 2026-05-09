@@ -24,9 +24,24 @@ TIBCO_WEB_SOURCES = {
     "flogo": [
         "https://docs.tibco.com/pub/flogo/latest/doc/html/GUID-3B0E7C1A.html",
         "https://docs.tibco.com/pub/flogo/latest/doc/html/GUID-9C2E9540.html",
+        "https://docs.tibco.com/pub/flogo/latest/doc/html/relnotes.html",
+        "https://docs.tibco.com/pub/flogo/latest/doc/html/GUID-activities.html",
+        "https://docs.tibco.com/pub/flogo/latest/doc/html/GUID-connectors.html",
     ],
     "bw": [
         "https://docs.tibco.com/pub/activematrix_businessworks/6.10.0/doc/html/GUID-6D8A5A69.html",
+        "https://docs.tibco.com/pub/bwce/latest/doc/html/GUID-getting-started.html",
+        "https://docs.tibco.com/pub/activematrix_businessworks/6.10.0/doc/html/GUID-tuning.html",
+        "https://docs.tibco.com/pub/activematrix_businessworks/6.10.0/doc/html/relnotes.html",
+    ],
+    "ems": [
+        "https://docs.tibco.com/pub/ems/latest/doc/html/GUID-admin-guide.html",
+        "https://docs.tibco.com/pub/ems/latest/doc/html/GUID-concepts.html",
+        "https://docs.tibco.com/pub/ems/latest/doc/html/relnotes.html",
+    ],
+    "ftl": [
+        "https://docs.tibco.com/pub/ftl/latest/doc/html/GUID-concepts.html",
+        "https://docs.tibco.com/pub/eftl/latest/doc/html/GUID-developer-guide.html",
     ],
 }
 

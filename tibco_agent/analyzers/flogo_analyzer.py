@@ -7,8 +7,9 @@ from .flogo_rules import (
     FlogoContext, FlogoFlow, FlogoTask,
     HttpSslRule, HttpTimeoutRule, MissingErrorHandlerRule,
     SelectStarRule, SensitiveLogRule, SubflowDepthRule,
+    HttpRetryRule, HardcodedCredentialRule, LargeFlowRule, MissingCorrelationIdRule,
     AppDescriptionRule, FlowNamingConventionRule, DedicatedConnectorRule,
-    SeparationOfConcernsRule, ApiVersioningRule,
+    SeparationOfConcernsRule, ApiVersioningRule, TimeoutConfiguredRule,
     detect_technologies, detect_pattern, extract_endpoints,
 )
 
@@ -74,13 +75,19 @@ class FlogoAnalyzer(Analyzer):
 
     def _default_rules(self) -> list[Rule]:
         return [
-            # Issue rules
+            # Error-level
             MissingErrorHandlerRule(),
             HttpTimeoutRule(),
+            HardcodedCredentialRule(),
+            # Warning-level
             HttpSslRule(),
             SelectStarRule(),
             SensitiveLogRule(),
+            HttpRetryRule(),
+            LargeFlowRule(),
+            # Info-level
             SubflowDepthRule(),
+            MissingCorrelationIdRule(),
         ]
 
     def _positive_rules(self) -> list[Rule]:
@@ -90,6 +97,7 @@ class FlogoAnalyzer(Analyzer):
             DedicatedConnectorRule(),
             SeparationOfConcernsRule(),
             ApiVersioningRule(),
+            TimeoutConfiguredRule(),
         ]
 
     def analyze(self, content: str, source: str = "unknown.flogo") -> AnalysisReport:
