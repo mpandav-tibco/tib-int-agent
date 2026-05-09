@@ -881,44 +881,113 @@ def main() -> None:
         st.session_state.messages = []
 
     if not st.session_state.messages:
-        st.markdown("<div style='height: 32px'></div>", unsafe_allow_html=True)
-        col_l, col_c, col_r = st.columns([1, 3, 1])
-        with col_c:
-            st.markdown(
-                "<h2 style='text-align:center; color:#d0e8ff; font-size:1.9rem; font-weight:700;"
-                " letter-spacing:-0.5px; margin-bottom:12px;'>How can I help you today?</h2>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(
-                "<p style='text-align:center; color:#8ab8dc; font-size:1.05rem; line-height:1.7;"
-                " margin-bottom:36px;'>"
-                "Your TIBCO integration and messaging expert — review applications, diagnose logs, "
-                "and answer questions across the full TIBCO platform stack, from any environment. "
-                "Upload files via the sidebar or ask a question directly.</p>",
-                unsafe_allow_html=True,
-            )
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.info(
-                "**Integration & Messaging Q&A**\n\n"
-                "Ask anything about TIBCO integration and messaging — middleware patterns, "
-                "EMS topics and queues, FTL/eFTL, connection pooling, Kubernetes deployment, "
-                "error handling, and platform best practices."
-            )
-        with c2:
-            st.info(
-                "**Application Review**\n\n"
-                "Upload a TIBCO integration application — receive an architect-level review "
-                "covering errors, warnings, missing handlers, security gaps, and overall "
-                "production readiness."
-            )
-        with c3:
-            st.info(
-                "**Log Analysis & Diagnostics**\n\n"
-                "Upload integration or messaging logs from any environment — get root-cause "
-                "diagnosis, production impact assessment, and exact remediation steps."
-            )
-        st.markdown("<div style='height: 32px'></div>", unsafe_allow_html=True)
+        st.markdown("""
+<style>
+/* ── Welcome screen ──────────────────────────────────────────────── */
+.welcome-wrap {
+    max-width: 860px;
+    margin: 32px auto 0;
+    text-align: center;
+    padding: 0 16px;
+}
+.welcome-heading {
+    font-size: 2.6rem;
+    font-weight: 800;
+    color: #002a55;
+    letter-spacing: -1.2px;
+    line-height: 1.1;
+    margin: 0 0 14px;
+}
+.welcome-heading span {
+    background: linear-gradient(90deg, #003865 0%, #0077cc 60%, #003865 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.welcome-sub {
+    font-size: 1.08rem;
+    color: #3a5a7a;
+    line-height: 1.75;
+    max-width: 620px;
+    margin: 0 auto 40px;
+}
+.welcome-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 18px;
+    text-align: left;
+    margin-bottom: 36px;
+}
+.w-card {
+    background: #ffffff;
+    border-radius: 14px;
+    padding: 22px 20px 20px;
+    box-shadow: 0 4px 24px rgba(0,56,101,0.09);
+    border: 1px solid #e2eaf4;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    cursor: default;
+}
+.w-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #003865, #0077cc);
+}
+.w-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 10px 32px rgba(0,56,101,0.14);
+}
+.w-card-icon {
+    font-size: 1.7rem;
+    margin-bottom: 10px;
+    display: block;
+}
+.w-card-title {
+    font-size: 0.97rem;
+    font-weight: 700;
+    color: #003865;
+    margin: 0 0 8px;
+}
+.w-card-body {
+    font-size: 0.85rem;
+    color: #4a5568;
+    line-height: 1.65;
+    margin: 0;
+}
+</style>
+
+<div class="welcome-wrap">
+  <h2 class="welcome-heading"><span>How can I help you today?</span></h2>
+  <p class="welcome-sub">
+    Your TIBCO integration &amp; messaging expert — review applications, diagnose logs,
+    and answer questions across the full TIBCO platform stack, from any environment.
+  </p>
+  <div class="welcome-cards">
+    <div class="w-card">
+      <span class="w-card-icon">💬</span>
+      <p class="w-card-title">Integration &amp; Messaging Q&amp;A</p>
+      <p class="w-card-body">Ask anything — middleware patterns, EMS topics &amp; queues,
+        FTL/eFTL, connection pooling, Kubernetes deployment, and platform best practices.</p>
+    </div>
+    <div class="w-card">
+      <span class="w-card-icon">🔍</span>
+      <p class="w-card-title">Application Review</p>
+      <p class="w-card-body">Upload a TIBCO integration application and receive an
+        architect-level review covering errors, missing handlers, security gaps,
+        and production readiness.</p>
+    </div>
+    <div class="w-card">
+      <span class="w-card-icon">📋</span>
+      <p class="w-card-title">Log Analysis &amp; Diagnostics</p>
+      <p class="w-card-body">Upload BW or Flogo logs from any environment — Kubernetes,
+        on-prem, or cloud — and get root-cause diagnosis with exact remediation steps.</p>
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
     for msg in st.session_state.messages:
         _render_chat_msg(msg["role"], msg["content"])
