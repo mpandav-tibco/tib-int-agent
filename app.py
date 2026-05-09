@@ -698,50 +698,49 @@ def main() -> None:
 """, unsafe_allow_html=True)
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
+    flogo_content = ""
+    log_content   = ""
+
     with st.sidebar:
-        st.header("Upload for Analysis")
-
-        flogo_file = st.file_uploader(
-            "Flogo app (.flogo / .json)",
-            type=["flogo", "json"],
-            help="Upload a .flogo file for static analysis — missing error handlers, timeouts, SSL, etc.",
-        )
-        log_file = st.file_uploader(
-            "Integration log (.log / .txt)",
-            type=["log", "txt"],
-            help="Upload a BW or Flogo log from any environment (Kubernetes, on-prem, cloud) for error diagnosis.",
-        )
-
-        flogo_content = flogo_file.read().decode("utf-8") if flogo_file else ""
-        log_content   = log_file.read().decode("utf-8")   if log_file   else ""
-
-        if flogo_content:
-            st.success(f"Flogo loaded ({len(flogo_content):,} chars)")
-            from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
-            st.session_state.flogo_report = FlogoAnalyzer().analyze(
-                flogo_content, source=flogo_file.name
+        with st.expander("Upload for Analysis", expanded=True):
+            flogo_file = st.file_uploader(
+                "Flogo app (.flogo / .json)",
+                type=["flogo", "json"],
+                help="Upload a .flogo file for static analysis — missing error handlers, timeouts, SSL, etc.",
             )
-        else:
-            st.session_state.pop("flogo_report", None)
-
-        if log_content:
-            st.success(f"Log loaded ({len(log_content):,} chars)")
-            from tibco_agent.analyzers.log_analyzer import LogAnalyzer
-            st.session_state.log_report = LogAnalyzer().analyze(
-                log_content, source=log_file.name
+            log_file = st.file_uploader(
+                "Integration log (.log / .txt)",
+                type=["log", "txt"],
+                help="Upload a BW or Flogo log from any environment (Kubernetes, on-prem, cloud) for error diagnosis.",
             )
-        else:
-            st.session_state.pop("log_report", None)
 
-        _render_download_buttons()
+            flogo_content = flogo_file.read().decode("utf-8") if flogo_file else ""
+            log_content   = log_file.read().decode("utf-8")   if log_file   else ""
 
-        st.divider()
-        st.subheader("Quick Prompts")
-        for label, prompt in _QUICK_PROMPTS:
-            if st.button(label, use_container_width=True):
-                st.session_state.pending_prompt = prompt
+            if flogo_content:
+                st.success(f"Flogo loaded ({len(flogo_content):,} chars)")
+                from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
+                st.session_state.flogo_report = FlogoAnalyzer().analyze(
+                    flogo_content, source=flogo_file.name
+                )
+            else:
+                st.session_state.pop("flogo_report", None)
 
-        st.divider()
+            if log_content:
+                st.success(f"Log loaded ({len(log_content):,} chars)")
+                from tibco_agent.analyzers.log_analyzer import LogAnalyzer
+                st.session_state.log_report = LogAnalyzer().analyze(
+                    log_content, source=log_file.name
+                )
+            else:
+                st.session_state.pop("log_report", None)
+
+            _render_download_buttons()
+
+        with st.expander("Quick Prompts", expanded=False):
+            for label, prompt in _QUICK_PROMPTS:
+                if st.button(label, use_container_width=True):
+                    st.session_state.pending_prompt = prompt
 
         # ── Settings expander ─────────────────────────────────────────────────
         _init_session_settings()
