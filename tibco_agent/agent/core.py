@@ -200,10 +200,24 @@ def build_prompt(
     flogo_content: str = "",
     log_content: str = "",
     on_step: Callable[[str, int], None] | None = None,
+    chat_history: list[dict] | None = None,
 ) -> str:
     """Assemble the full LLM prompt.  on_step(message, pct) is called at each stage."""
     _step = on_step or (lambda _msg, _pct: None)
     parts = [question]
+
+    # Inject the last few conversation turns so the LLM can handle follow-ups
+    if chat_history:
+        recent = chat_history[-6:]  # Last 3 user+assistant turn pairs
+        history_lines = [
+            "\n\n## Conversation History",
+            "_Prior turns — use for follow-up context only, do not re-answer unless asked._",
+        ]
+        for msg in recent:
+            role = "User" if msg["role"] == "user" else "TARA"
+            text = msg["content"][:400].replace("\n", " ").strip()
+            history_lines.append(f"**{role}:** {text}")
+        parts.append("\n".join(history_lines))
 
     _step("Searching knowledge base…", 15)
     kb = search_knowledge(question)
@@ -275,6 +289,12 @@ def call_llm(agent: ReActAgent, prompt: str) -> str:
     return _clean_response(future.result(timeout=600))
 
 
-def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: str = "") -> str:
-    prompt = build_prompt(question, flogo_content, log_content)
+def ask(
+    agent: ReActAgent,
+    question: str,
+    flogo_content: str = "",
+    log_content: str = "",
+    chat_history: list[dict] | None = None,
+) -> str:
+    prompt = build_prompt(question, flogo_content, log_content, chat_history=chat_history)
     return call_llm(agent, prompt)

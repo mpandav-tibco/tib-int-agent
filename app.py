@@ -17,6 +17,7 @@ import streamlit as st
 
 from tibco_agent.report.generator import to_html, to_pdf
 from tibco_agent.agent.core import PROVIDER_MODEL_HINTS, build_prompt, call_llm
+from tibco_agent import feedback as _feedback
 
 # ── Chat avatar SVGs ──────────────────────────────────────────────────────────
 
@@ -70,6 +71,45 @@ def _chat_bubble_html(role: str, content: str) -> str:
 
 def _render_chat_msg(role: str, content: str) -> None:
     st.markdown(_chat_bubble_html(role, content), unsafe_allow_html=True)
+
+
+def _render_feedback_row(msg_idx: int, question: str, response: str) -> None:
+    """Tiny thumbs-up / thumbs-down row below each TARA bubble."""
+    given: set[int] = st.session_state.setdefault("feedback_given", set())
+    if msg_idx in given:
+        st.markdown(
+            '<p style="margin:-6px 0 6px 56px;font-size:0.7rem;color:#5a7a9a;">✓ Thanks for your feedback</p>',
+            unsafe_allow_html=True,
+        )
+        return
+    _, c_up, c_down, _ = st.columns([0.65, 0.09, 0.09, 4.17])
+    with c_up:
+        if st.button("👍", key=f"fb_up_{msg_idx}", help="Helpful response"):
+            _feedback.record(msg_idx, "up", question, response)
+            given.add(msg_idx)
+            st.rerun()
+    with c_down:
+        if st.button("👎", key=f"fb_down_{msg_idx}", help="Not helpful"):
+            _feedback.record(msg_idx, "down", question, response)
+            given.add(msg_idx)
+            st.rerun()
+
+
+def _export_chat_md() -> str:
+    """Format the current conversation as a Markdown document."""
+    import datetime
+    lines = [
+        "# TARA Chat Export",
+        f"*{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}*",
+        "",
+    ]
+    msgs = st.session_state.get("messages", [])
+    for msg in msgs:
+        if msg["role"] == "user":
+            lines += ["---", f"**You:** {msg['content']}", ""]
+        else:
+            lines += [f"**TARA:**\n\n{msg['content']}", ""]
+    return "\n".join(lines)
 
 
 def _thinking_html(text: str, pct: int) -> str:
@@ -155,6 +195,25 @@ html, body { color-scheme: light !important; }
     width: 100% !important;
     max-width: 900px !important;
     box-sizing: border-box !important;
+}
+
+/* ── Feedback buttons — tiny emoji buttons below TARA bubbles ──────── */
+button[data-testid^="baseButton-secondary"][title="Helpful response"],
+button[data-testid^="baseButton-secondary"][title="Not helpful"] {
+    background: transparent !important;
+    border: 1px solid #d0dff0 !important;
+    color: #4a6080 !important;
+    font-size: 0.82rem !important;
+    padding: 1px 6px !important;
+    min-height: unset !important;
+    line-height: 1.4 !important;
+    border-radius: 6px !important;
+    box-shadow: none !important;
+}
+button[data-testid^="baseButton-secondary"][title="Helpful response"]:hover,
+button[data-testid^="baseButton-secondary"][title="Not helpful"]:hover {
+    background: #eef3f9 !important;
+    transform: none !important;
 }
 
 /* ── Sidebar labels & text ─────────────────────────────────────────── */
@@ -900,7 +959,21 @@ def main() -> None:
         with btn_col2:
             if st.button("Clear Chat", use_container_width=True):
                 st.session_state.messages = []
+                st.session_state.pop("feedback_given", None)
                 st.rerun()
+
+        msgs_for_export = st.session_state.get("messages", [])
+        if msgs_for_export:
+            import datetime as _dt
+            fname = f"tara-chat-{_dt.date.today()}.md"
+            st.download_button(
+                "Export Chat",
+                data=_export_chat_md(),
+                file_name=fname,
+                mime="text/markdown",
+                use_container_width=True,
+                help="Download this conversation as Markdown",
+            )
 
     # ── Chat ──────────────────────────────────────────────────────────────────
     if "messages" not in st.session_state:
@@ -1015,8 +1088,17 @@ def main() -> None:
 </div>
 """, unsafe_allow_html=True)
 
-    for msg in st.session_state.messages:
+    _msgs = st.session_state.messages
+    _user_turns = [m for m in _msgs if m["role"] == "user"]
+    for i, msg in enumerate(_msgs):
         _render_chat_msg(msg["role"], msg["content"])
+        if msg["role"] == "assistant":
+            # Find the immediately preceding user question for this response
+            preceding_q = ""
+            for m in _msgs[:i]:
+                if m["role"] == "user":
+                    preceding_q = m["content"]
+            _render_feedback_row(i, preceding_q, msg["content"])
 
     user_input = st.session_state.pop("pending_prompt", None) or st.chat_input(
         "Ask TARA about TIBCO BW / Flogo..."
@@ -1037,9 +1119,16 @@ def main() -> None:
             agent = _load_agent()
 
             # Phase 1 — build prompt with live step updates (runs in main thread)
+            # Pass recent history (excluding the current user turn) for follow-up awareness
+            _history = [
+                {"role": m["role"], "content": m["content"]}
+                for m in st.session_state.messages[:-1]  # exclude current user turn
+                if m["role"] in ("user", "assistant")
+            ][-8:]  # last 4 turns max
             prompt = build_prompt(
                 user_input, flogo_content, log_content,
                 on_step=_update,
+                chat_history=_history or None,
             )
 
             # Phase 2 — LLM call in background thread; poll with fake progress
