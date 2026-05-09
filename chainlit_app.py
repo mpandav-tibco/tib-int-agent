@@ -335,9 +335,9 @@ async def on_export_chat(action: cl.Action) -> None:
 def _make_actions() -> list:
     """Return fresh Action objects for each message (Chainlit binds them per-message)."""
     return [
-        cl.Action(name="thumbs_up",   label="👍", value="up",     description="Mark as helpful"),
-        cl.Action(name="thumbs_down", label="👎", value="down",   description="Mark as not helpful"),
-        cl.Action(name="export_chat", label="📥 Export", value="export", description="Export chat"),
+        cl.Action(name="thumbs_up",   label="👍", value="up",     description="Mark as helpful",     payload={"action": "up"}),
+        cl.Action(name="thumbs_down", label="👎", value="down",   description="Mark as not helpful", payload={"action": "down"}),
+        cl.Action(name="export_chat", label="📥 Export", value="export", description="Export chat",   payload={"action": "export"}),
     ]
 
 
