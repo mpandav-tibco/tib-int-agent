@@ -19,6 +19,147 @@ st.set_page_config(
     layout="wide",
 )
 
+_AGENTIC_CSS = """
+<style>
+/* ── Animated gradient background ─────────────────────────────────── */
+.stApp {
+    background: linear-gradient(-45deg, #03060f, #060d1a, #0a1628, #071020);
+    background-size: 400% 400%;
+    animation: bgGradient 22s ease infinite;
+}
+@keyframes bgGradient {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+/* ── Dot-grid overlay ──────────────────────────────────────────────── */
+.stApp > div:first-child::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: radial-gradient(rgba(0,87,168,0.13) 1px, transparent 1px);
+    background-size: 38px 38px;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* ── Ambient glow orbs ─────────────────────────────────────────────── */
+.stApp > div:first-child::after {
+    content: '';
+    position: fixed;
+    width: 700px; height: 700px;
+    background: radial-gradient(circle, rgba(0,87,168,0.09) 0%, transparent 68%);
+    top: -180px; right: -180px;
+    border-radius: 50%;
+    animation: orb 28s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 0;
+}
+@keyframes orb {
+    0%, 100% { transform: translate(0,0) scale(1); }
+    33%       { transform: translate(-70px, 90px) scale(1.06); }
+    66%       { transform: translate(50px, -70px) scale(0.94); }
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background: rgba(4, 9, 20, 0.88) !important;
+    border-right: 1px solid rgba(0,87,168,0.22) !important;
+    backdrop-filter: blur(14px);
+    box-shadow: 4px 0 32px rgba(0,40,90,0.45);
+}
+
+/* ── Main content area ─────────────────────────────────────────────── */
+.block-container { background: transparent !important; }
+
+/* ── Chat messages ─────────────────────────────────────────────────── */
+[data-testid="stChatMessage"] {
+    background: rgba(8,18,36,0.55) !important;
+    border: 1px solid rgba(0,87,168,0.17) !important;
+    border-radius: 14px !important;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 28px rgba(0,0,0,0.35);
+    transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+[data-testid="stChatMessage"]:hover {
+    border-color: rgba(0,87,168,0.38) !important;
+    box-shadow: 0 4px 32px rgba(0,87,168,0.15);
+}
+
+/* ── Chat input ────────────────────────────────────────────────────── */
+[data-testid="stChatInputContainer"] {
+    background: rgba(6,13,26,0.82) !important;
+    border: 1px solid rgba(0,87,168,0.28) !important;
+    border-radius: 14px !important;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 0 24px rgba(0,87,168,0.12);
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────── */
+.stButton > button {
+    background: rgba(0,40,80,0.38) !important;
+    border: 1px solid rgba(0,87,168,0.32) !important;
+    color: #c2d9f8 !important;
+    border-radius: 8px !important;
+    transition: all 0.2s ease !important;
+    backdrop-filter: blur(6px);
+}
+.stButton > button:hover {
+    background: rgba(0,87,168,0.50) !important;
+    border-color: rgba(0,140,255,0.6) !important;
+    box-shadow: 0 0 18px rgba(0,87,168,0.45) !important;
+    transform: translateY(-1px);
+    color: #fff !important;
+}
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #0057a8 0%, #003865 100%) !important;
+    border: 1px solid rgba(0,140,255,0.4) !important;
+    box-shadow: 0 0 22px rgba(0,87,168,0.35) !important;
+}
+
+/* ── Text inputs / sliders ─────────────────────────────────────────── */
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea {
+    background: rgba(4,9,20,0.75) !important;
+    border: 1px solid rgba(0,87,168,0.25) !important;
+    color: #c2d9f8 !important;
+    border-radius: 8px !important;
+}
+.stTextInput > div > div > input:focus {
+    border-color: rgba(0,140,255,0.55) !important;
+    box-shadow: 0 0 12px rgba(0,87,168,0.25) !important;
+}
+
+/* ── Expanders ─────────────────────────────────────────────────────── */
+details > summary,
+.streamlit-expanderHeader {
+    background: rgba(6,13,26,0.55) !important;
+    border: 1px solid rgba(0,87,168,0.2) !important;
+    border-radius: 10px !important;
+    color: #c2d9f8 !important;
+}
+
+/* ── Info / success / warning cards ───────────────────────────────── */
+[data-testid="stNotification"],
+div[class*="stAlert"] {
+    background: rgba(0,40,80,0.25) !important;
+    border: 1px solid rgba(0,87,168,0.22) !important;
+    border-radius: 10px !important;
+    backdrop-filter: blur(8px);
+}
+
+/* ── Dividers ──────────────────────────────────────────────────────── */
+hr { border-color: rgba(0,87,168,0.18) !important; }
+
+/* ── Scrollbar ─────────────────────────────────────────────────────── */
+::-webkit-scrollbar              { width: 5px; height: 5px; }
+::-webkit-scrollbar-track        { background: rgba(4,9,20,0.4); }
+::-webkit-scrollbar-thumb        { background: rgba(0,87,168,0.38); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover  { background: rgba(0,120,220,0.65); }
+</style>
+"""
+
 _QUICK_PROMPTS = [
     ("Error Handling",    "What are the Flogo best practices for error handling and what should every flow include?"),
     ("JDBC Pooling",      "How should I configure JDBC connection pooling in BusinessWorks for high concurrency?"),
@@ -173,11 +314,68 @@ def _persist_env(updates: dict) -> None:
 # ── Main UI ───────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    st.title("TIBCO Integration AI Agent")
-    st.caption(
-        "Powered by Ollama (local LLM) + Weaviate vector search. "
-        "Specializes in TIBCO BusinessWorks and Flogo Enterprise."
-    )
+    st.markdown(_AGENTIC_CSS, unsafe_allow_html=True)
+    st.markdown("""
+<style>
+@keyframes mascotPulse {
+    0%, 100% { transform: scale(1) rotate(-3deg); filter: drop-shadow(0 0 8px rgba(0,140,255,0.5)); }
+    50%       { transform: scale(1.08) rotate(3deg); filter: drop-shadow(0 0 20px rgba(0,140,255,0.9)); }
+}
+@keyframes titleGlow {
+    0%, 100% { text-shadow: 0 0 20px rgba(0,140,255,0.3); }
+    50%       { text-shadow: 0 0 40px rgba(0,140,255,0.7), 0 0 80px rgba(0,87,168,0.3); }
+}
+@keyframes statusPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 6px #00c853; }
+    50%       { opacity: 0.5; box-shadow: 0 0 12px #00c853; }
+}
+.agent-header {
+    text-align: center;
+    padding: 32px 0 16px 0;
+}
+.agent-mascot {
+    font-size: 72px;
+    display: block;
+    animation: mascotPulse 3s ease-in-out infinite;
+    margin-bottom: 8px;
+}
+.agent-title {
+    font-size: 2.8rem;
+    font-weight: 800;
+    background: linear-gradient(135deg, #60b4ff 0%, #90ceff 40%, #0057a8 70%, #c8dfff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: titleGlow 4s ease-in-out infinite;
+    letter-spacing: -0.5px;
+    margin: 0;
+}
+.agent-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    color: #7aafd4;
+    font-size: 0.82rem;
+    letter-spacing: 0.5px;
+}
+.agent-status-dot {
+    width: 8px; height: 8px;
+    background: #00c853;
+    border-radius: 50%;
+    display: inline-block;
+    animation: statusPulse 2s ease-in-out infinite;
+}
+</style>
+<div class="agent-header">
+  <span class="agent-mascot">🤖</span>
+  <p class="agent-title">TIBCO Integration AI Agent</p>
+  <div class="agent-status">
+    <span class="agent-status-dot"></span>
+    Powered by Ollama &nbsp;·&nbsp; Weaviate vector search &nbsp;·&nbsp; BusinessWorks &amp; Flogo specialist
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
