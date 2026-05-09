@@ -11,6 +11,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from tibco_agent.report.generator import to_html, to_pdf
+
 st.set_page_config(
     page_title="TIBCO Integration AI Agent",
     page_icon="🔗",
@@ -86,6 +88,50 @@ def _apply_settings() -> bool:
     return True
 
 
+def _render_download_buttons() -> None:
+    """Render MD / HTML / PDF download buttons for any available analysis report."""
+    reports = []
+    if "flogo_report" in st.session_state:
+        reports.append(("Flogo", st.session_state.flogo_report))
+    if "log_report" in st.session_state:
+        reports.append(("Log", st.session_state.log_report))
+    if not reports:
+        return
+
+    with st.expander("Download Report", expanded=True):
+        for label, report in reports:
+            st.markdown(f"**{label}:** `{report.source}`")
+            col_md, col_html, col_pdf = st.columns(3)
+            stem = Path(report.source).stem
+            with col_md:
+                st.download_button(
+                    "MD",
+                    data=report.to_markdown().encode("utf-8"),
+                    file_name=f"{stem}_report.md",
+                    mime="text/markdown",
+                    use_container_width=True,
+                    key=f"dl_md_{label}",
+                )
+            with col_html:
+                st.download_button(
+                    "HTML",
+                    data=to_html(report).encode("utf-8"),
+                    file_name=f"{stem}_report.html",
+                    mime="text/html",
+                    use_container_width=True,
+                    key=f"dl_html_{label}",
+                )
+            with col_pdf:
+                st.download_button(
+                    "PDF",
+                    data=to_pdf(report),
+                    file_name=f"{stem}_report.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key=f"dl_pdf_{label}",
+                )
+
+
 def _persist_env(updates: dict) -> None:
     """Merge updated values into .env (creating the file if absent)."""
     env_map = {
@@ -149,8 +195,23 @@ def main() -> None:
 
         if flogo_content:
             st.success(f"Flogo loaded ({len(flogo_content):,} chars)")
+            from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
+            st.session_state.flogo_report = FlogoAnalyzer().analyze(
+                flogo_content, source=flogo_file.name
+            )
+        else:
+            st.session_state.pop("flogo_report", None)
+
         if log_content:
             st.success(f"Log loaded ({len(log_content):,} chars)")
+            from tibco_agent.analyzers.log_analyzer import LogAnalyzer
+            st.session_state.log_report = LogAnalyzer().analyze(
+                log_content, source=log_file.name
+            )
+        else:
+            st.session_state.pop("log_report", None)
+
+        _render_download_buttons()
 
         st.divider()
         st.subheader("Quick Prompts")
