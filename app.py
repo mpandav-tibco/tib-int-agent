@@ -142,15 +142,18 @@ html, body { color-scheme: light !important; }
 
 /* ── Chat input — centered & constrained at all viewport widths ─────── */
 [data-testid="stBottom"] {
-    background: linear-gradient(to top, #eef3f9 65%, transparent) !important;
-    padding: 6px 0 14px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    background: linear-gradient(to top, #eef3f9 60%, transparent) !important;
+    padding: 0 24px 16px !important;
+    box-sizing: border-box !important;
 }
-[data-testid="stBottom"] > div {
-    max-width: 900px !important;
+[data-testid="stBottom"] > *,
+[data-testid="stBottom"] > div,
+[data-testid="stBottom"] form {
     width: 100% !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    padding: 0 16px !important;
+    max-width: 900px !important;
     box-sizing: border-box !important;
 }
 
