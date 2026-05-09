@@ -7,12 +7,69 @@ Run with:
 
 from __future__ import annotations
 
+import html as _html_escape
 from pathlib import Path
 
+import markdown as _md
 import streamlit as st
 
 from tibco_agent.report.generator import to_html, to_pdf
 from tibco_agent.agent.core import PROVIDER_MODEL_HINTS
+
+# ── Chat avatar SVGs ──────────────────────────────────────────────────────────
+
+_TARA_SVG = """
+<svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="th" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0d3a6b"/>
+      <stop offset="100%" stop-color="#020d1a"/>
+    </linearGradient>
+  </defs>
+  <polygon points="20,1 37.3,10.5 37.3,29.5 20,39 2.7,29.5 2.7,10.5"
+           fill="none" stroke="#0055bb" stroke-width="0.8" opacity="0.55"/>
+  <polygon points="20,3 35.4,12 35.4,28 20,37 4.6,28 4.6,12"
+           fill="url(#th)" stroke="#0077dd" stroke-width="1.5"/>
+  <line x1="7" y1="20" x2="33" y2="20" stroke="#0099ff" stroke-width="0.8" opacity="0.35"/>
+  <circle cx="20" cy="3.5" r="2" fill="#0099ff" opacity="0.85"/>
+  <circle cx="35.4" cy="12"  r="1.3" fill="#0066cc" opacity="0.55"/>
+  <circle cx="35.4" cy="28"  r="1.3" fill="#0066cc" opacity="0.55"/>
+  <circle cx="20"   cy="36.5" r="1.3" fill="#0066cc" opacity="0.55"/>
+  <text x="20" y="27" text-anchor="middle"
+        font-size="16" font-weight="900"
+        font-family="Courier New,monospace" fill="#5bbeff">T</text>
+</svg>"""
+
+_USER_SVG = """
+<svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="20" cy="20" r="19" fill="rgba(0,35,70,0.75)"
+          stroke="rgba(0,90,170,0.4)" stroke-width="1.5"/>
+  <circle cx="20" cy="14" r="7" fill="rgba(0,90,170,0.65)"/>
+  <path d="M4,37 Q4,25 20,25 Q36,25 36,37 Z" fill="rgba(0,90,170,0.65)"/>
+</svg>"""
+
+
+def _chat_bubble_html(role: str, content: str) -> str:
+    """Return custom HTML for a single chat message."""
+    if role == "user":
+        safe = _html_escape.escape(content).replace("\n", "<br>")
+        return (
+            '<div class="chat-row chat-user">'
+            f'<div class="chat-bubble chat-bubble-user">{safe}</div>'
+            f'<div class="chat-avatar">{_USER_SVG}</div>'
+            '</div>'
+        )
+    body = _md.markdown(content, extensions=["tables", "fenced_code", "nl2br"])
+    return (
+        '<div class="chat-row chat-tara">'
+        f'<div class="chat-avatar">{_TARA_SVG}</div>'
+        f'<div class="chat-bubble chat-bubble-tara">{body}</div>'
+        '</div>'
+    )
+
+
+def _render_chat_msg(role: str, content: str) -> None:
+    st.markdown(_chat_bubble_html(role, content), unsafe_allow_html=True)
 
 st.set_page_config(
     page_title="TARA — TIBCO AI Review Agent",
@@ -158,6 +215,77 @@ hr { border-color: rgba(0,87,168,0.18) !important; }
 ::-webkit-scrollbar-track        { background: rgba(4,9,20,0.4); }
 ::-webkit-scrollbar-thumb        { background: rgba(0,87,168,0.38); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover  { background: rgba(0,120,220,0.65); }
+
+/* ── Custom chat layout ────────────────────────────────────────────── */
+.chat-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 10px 0;
+    width: 100%;
+}
+.chat-user { flex-direction: row-reverse; }
+.chat-tara { flex-direction: row; }
+.chat-avatar { flex-shrink: 0; width: 40px; height: 40px; }
+.chat-bubble {
+    max-width: 72%;
+    padding: 12px 16px;
+    line-height: 1.65;
+    font-size: 0.91rem;
+    word-break: break-word;
+}
+.chat-bubble-user {
+    background: rgba(0,45,100,0.5);
+    border: 1px solid rgba(0,110,200,0.35);
+    border-radius: 18px 4px 18px 18px;
+    color: #d0e8ff;
+}
+.chat-bubble-tara {
+    background: rgba(6,14,32,0.65);
+    border: 1px solid rgba(0,87,168,0.25);
+    border-radius: 4px 18px 18px 18px;
+    color: #c0ddf8;
+    backdrop-filter: blur(6px);
+}
+/* TARA bubble markdown styles */
+.chat-bubble-tara h2,.chat-bubble-tara h3 {
+    color: #5bbeff; border-bottom: 1px solid rgba(0,87,168,0.25);
+    padding-bottom: 4px; margin: 12px 0 6px;
+}
+.chat-bubble-tara h4 { color: #7acfff; margin: 8px 0 4px; }
+.chat-bubble-tara strong { color: #90d0ff; font-weight: 600; }
+.chat-bubble-tara code {
+    background: rgba(0,20,50,0.7); color: #60c4ff;
+    border-radius: 4px; padding: 2px 6px;
+    font-size: 0.87em; font-family: 'Courier New', monospace;
+}
+.chat-bubble-tara pre {
+    background: rgba(2,8,20,0.8); border: 1px solid rgba(0,87,168,0.25);
+    border-radius: 8px; padding: 12px 14px; overflow-x: auto; margin: 8px 0;
+}
+.chat-bubble-tara pre code { background: none; padding: 0; color: #a0d4ff; }
+.chat-bubble-tara table {
+    border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 0.87rem;
+}
+.chat-bubble-tara th {
+    background: rgba(0,56,101,0.5); padding: 6px 10px;
+    border: 1px solid rgba(0,87,168,0.3); color: #90d0ff;
+}
+.chat-bubble-tara td { padding: 5px 10px; border: 1px solid rgba(0,87,168,0.2); }
+.chat-bubble-tara tr:nth-child(even) { background: rgba(0,30,60,0.2); }
+.chat-bubble-tara ul,.chat-bubble-tara ol { padding-left: 18px; margin: 6px 0; }
+.chat-bubble-tara li { margin: 4px 0; }
+.chat-bubble-tara blockquote {
+    border-left: 3px solid rgba(0,140,255,0.5); margin: 8px 0;
+    padding: 4px 12px; background: rgba(0,40,80,0.2); border-radius: 0 6px 6px 0;
+}
+/* TARA thinking animation */
+.chat-thinking { font-style: italic; color: #7aafd4;
+    animation: thinkPulse 1.4s ease-in-out infinite; }
+@keyframes thinkPulse {
+    0%,100% { opacity: 0.4; }
+    50%     { opacity: 1;   }
+}
 </style>
 """
 
@@ -745,38 +873,44 @@ def main() -> None:
         st.markdown("<div style='height: 40px'></div>", unsafe_allow_html=True)
 
     for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+        _render_chat_msg(msg["role"], msg["content"])
 
     user_input = st.session_state.pop("pending_prompt", None) or st.chat_input(
-        "Ask about TIBCO BW / Flogo..."
+        "Ask TARA about TIBCO BW / Flogo..."
     )
 
     if user_input:
         st.session_state.messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
+        _render_chat_msg("user", user_input)
 
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                try:
-                    agent = _load_agent()
-                    from tibco_agent.agent.core import ask
-                    response = ask(agent, user_input, flogo_content, log_content)
-                except RuntimeError as e:
-                    response = (
-                        f"**Setup required:** {e}\n\n"
-                        "Run `python ingest.py` first to build the knowledge base."
-                    )
-                except Exception as e:
-                    response = (
-                        f"**Error:** {e}\n\n"
-                        "Check that Ollama is running: `ollama serve`\n"
-                        "Check that Weaviate is running: `docker-compose up -d`\n"
-                        "Models: `ollama pull llama3.1:8b && ollama pull nomic-embed-text`"
-                    )
-            st.markdown(response)
+        # Show animated TARA thinking placeholder
+        tara_slot = st.empty()
+        tara_slot.markdown(
+            '<div class="chat-row chat-tara">'
+            f'<div class="chat-avatar">{_TARA_SVG}</div>'
+            '<div class="chat-bubble chat-bubble-tara chat-thinking">'
+            'TARA is thinking…</div></div>',
+            unsafe_allow_html=True,
+        )
 
+        try:
+            agent = _load_agent()
+            from tibco_agent.agent.core import ask
+            response = ask(agent, user_input, flogo_content, log_content)
+        except RuntimeError as e:
+            response = (
+                f"**Setup required:** {e}\n\n"
+                "Run `python ingest.py` first to build the knowledge base."
+            )
+        except Exception as e:
+            response = (
+                f"**Error:** {e}\n\n"
+                "Check that Ollama is running: `ollama serve`\n"
+                "Check that Weaviate is running: `docker-compose up -d`\n"
+                "Models: `ollama pull llama3.1:8b && ollama pull nomic-embed-text`"
+            )
+
+        tara_slot.markdown(_chat_bubble_html("assistant", response), unsafe_allow_html=True)
         st.session_state.messages.append({"role": "assistant", "content": response})
 
 
