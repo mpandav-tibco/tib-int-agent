@@ -96,11 +96,16 @@ st.set_page_config(
 
 _AGENTIC_CSS = """
 <style>
+/* ── Force light rendering in all Streamlit theme modes ───────────── */
+:root { color-scheme: light !important; }
+html, body { color-scheme: light !important; }
+
 /* ── Clean professional background ────────────────────────────────── */
 .stApp {
-    background: linear-gradient(160deg, #eef3f9 0%, #e8f0f8 50%, #eef3f9 100%);
+    background: linear-gradient(160deg, #eef3f9 0%, #e8f0f8 50%, #eef3f9 100%) !important;
     background-size: 200% 200%;
     animation: bgShift 35s ease infinite;
+    color-scheme: light !important;
 }
 @keyframes bgShift {
     0%,100% { background-position: 0% 0%; }
