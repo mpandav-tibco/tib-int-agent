@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+
+  # ── Weaviate vector store ────────────────────────────────────────────────────
+  weaviate:
+    image: semitechnologies/weaviate:1.24.1
+    ports:
+      - "8080:8080"
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODULE: none
+      CLUSTER_HOSTNAME: node1
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── TARA Chainlit application ────────────────────────────────────────────────
+  tara:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Weaviate — always the compose service
+      WEAVIATE_URL: http://weaviate:8080
+      # Ollama — runs on the host machine (not in Docker) by default
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      # LLM provider selection
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-r1:latest}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_API_BASE: ${LLM_API_BASE:-}
+      # Embedding model (must be available in Ollama)
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+      # Knowledge base collection
+      COLLECTION_NAME: ${COLLECTION_NAME:-TibcoKnowledge}
+      # Timeouts
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-180}
+      # Auth — set CHAINLIT_AUTH_SECRET to enable login, then set TARA_USERNAME / TARA_PASSWORD
+      CHAINLIT_AUTH_SECRET: ${CHAINLIT_AUTH_SECRET:-}
+      TARA_USERNAME: ${TARA_USERNAME:-tara}
+      TARA_PASSWORD: ${TARA_PASSWORD:-tara}
+    volumes:
+      # Persist feedback DB and local knowledge files across restarts
+      - ./data:/app/data
+    depends_on:
+      weaviate:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  weaviate_data:

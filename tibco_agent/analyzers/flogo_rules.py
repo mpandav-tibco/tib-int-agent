@@ -529,6 +529,86 @@ class LargeFlowRule(Rule):
         return findings
 
 
+import re as _re
+
+
+class LargeLogPayloadRule(Rule):
+    """Flag Log activities that map entire objects ($flow, $activity[x].output) rather than specific fields."""
+    id = "FLOGO-011"
+    severity = Severity.WARNING
+    category = "performance"
+    tags = ["log", "performance", "payload", "security"]
+
+    # Matches $flow or $activity[name].input / $activity[name].output without a further field path
+    _BULK_RE = _re.compile(
+        r"\$flow\b|\$activity\[[^\]]+\]\.(input|output)(?!\.[a-zA-Z_])",
+        _re.IGNORECASE,
+    )
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        findings = []
+        for flow in ctx.flows:
+            for task in flow.tasks:
+                if not _matches(task.activity_ref, _LOG_REFS):
+                    continue
+                msg = str(task.input.get("message", ""))
+                if self._BULK_RE.search(msg):
+                    findings.append(Finding(
+                        rule_id=self.id,
+                        severity=self.severity,
+                        title="Bulk Object Logged",
+                        location=f"flow:{flow.name} / activity:{task.name}",
+                        message=(
+                            "Log message maps an entire $flow or $activity object. "
+                            "This serializes the full object tree — large payloads, "
+                            "potential PII exposure, and significant overhead under load."
+                        ),
+                        recommendation=(
+                            "Log only specific fields: `$activity[CallService].output.statusCode` "
+                            "instead of `$activity[CallService].output`. "
+                            "Use a structured log format with key fields only."
+                        ),
+                        tags=self.tags,
+                    ))
+        return findings
+
+
+class HardcodedUrlRule(Rule):
+    """Flag REST activities where the URI is a literal URL instead of an app property reference."""
+    id = "FLOGO-012"
+    severity = Severity.WARNING
+    category = "configuration"
+    tags = ["url", "configuration", "portability", "environment"]
+
+    _URL_RE = _re.compile(r"https?://[a-zA-Z0-9]", _re.IGNORECASE)
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        findings = []
+        for flow in ctx.flows:
+            for task in flow.tasks:
+                if not _matches(task.activity_ref, _HTTP_REFS):
+                    continue
+                uri = str(task.input.get("uri", "") or task.input.get("url", ""))
+                if self._URL_RE.search(uri) and not uri.strip().startswith("$"):
+                    findings.append(Finding(
+                        rule_id=self.id,
+                        severity=self.severity,
+                        title="Hardcoded URL in REST Activity",
+                        location=f"flow:{flow.name} / activity:{task.name}",
+                        message=(
+                            f"URI `{uri[:80]}` is a literal value. "
+                            "Hardcoded URLs cannot be changed per environment "
+                            "without editing the .flogo file."
+                        ),
+                        recommendation=(
+                            "Move the base URL to a Flogo app property: `$property[PAYMENT_SERVICE_URL]`. "
+                            "Inject per environment via Kubernetes ConfigMap or Helm values."
+                        ),
+                        tags=self.tags,
+                    ))
+        return findings
+
+
 class MissingCorrelationIdRule(Rule):
     id = "FLOGO-010"
     severity = Severity.INFO

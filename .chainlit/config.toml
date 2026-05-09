@@ -2,6 +2,11 @@
 # Disable anonymous telemetry
 enable_telemetry = false
 
+# ── Auth ─────────────────────────────────────────────────────────────────────
+# Password auth is only activated when the CHAINLIT_AUTH_SECRET environment
+# variable is set. For local dev, leave it unset — no login required.
+# In production: set CHAINLIT_AUTH_SECRET, TARA_USERNAME, and TARA_PASSWORD.
+
 [features]
 # Allow file uploads in the chat input bar
 multi_modal = true

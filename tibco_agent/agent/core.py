@@ -50,6 +50,10 @@ Rules:
 - Cite the specific flow name, activity name, or log line number when relevant.
 - Prioritize errors over warnings. Be concise and actionable.
 - If you are not confident, say so. Do not invent configuration values or API names.
+- When knowledge base excerpts were provided and informed your answer, end your response with
+  a "## Sources" section listing the excerpt labels you drew on, one per line:
+  `- [Excerpt N — product | filename]`. Omit this section when you answered from training
+  knowledge only and the excerpts were irrelevant or absent.
 """
 
 # ── Intent classification ─────────────────────────────────────────────────────

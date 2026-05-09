@@ -11,6 +11,8 @@ sys.path.insert(0, ".")
 
 from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
 from tibco_agent.analyzers.log_analyzer import LogAnalyzer
+from tibco_agent.analyzers.bw_analyzer import BWAnalyzer
+from tibco_agent.analyzers.multi_analyzer import analyze_zip
 
 # ── Sample .flogo with intentional issues ────────────────────────────────────
 
@@ -84,6 +86,26 @@ SAMPLE_LOG = """2024-01-15T10:23:45Z INFO  Starting flogo application order-proc
 """
 
 
+SAMPLE_BWP = """<?xml version="1.0" encoding="UTF-8"?>
+<process:ProcessDefinition xmlns:process="http://ns.tibco.com/bw/process"
+    name="ProcessPayment" id="ProcessPayment">
+  <activity name="InvokePaymentAPI" id="http1">
+    <type>com.tibco.plugin.http.HTTPActivityUI</type>
+    <config>
+      <Url>http://payment.internal/api/charge</Url>
+      <password>s3cr3t_literal</password>
+    </config>
+  </activity>
+  <activity name="QueryOrders" id="jdbc1">
+    <type>com.tibco.jdbc.JDBCQueryActivity</type>
+    <config>
+      <statement>SELECT * FROM orders WHERE customer_id = ?</statement>
+    </config>
+  </activity>
+</process:ProcessDefinition>
+"""
+
+
 def run_tests():
     print("=" * 60)
     print("TEST 1: Flogo Analyzer")
@@ -104,7 +126,63 @@ def run_tests():
     print(f"\n[PASS] Found {len(log_report.matches)} error pattern(s)")
 
     print("\n" + "=" * 60)
-    print("TEST 3: RAG Knowledge Search (Weaviate)")
+    print("TEST 3: BW Analyzer")
+    print("=" * 60)
+    bw_analyzer = BWAnalyzer()
+    bw_report = bw_analyzer.analyze(SAMPLE_BWP, source="ProcessPayment.bwp")
+    print(bw_analyzer._report_to_markdown(bw_report))
+    assert bw_report.error_count >= 1, f"Expected >=1 BW errors, got {bw_report.error_count}"
+    print(f"\n[PASS] BW Analyzer found {bw_report.error_count} error(s), {bw_report.warning_count} warning(s)")
+
+    print("\n" + "=" * 60)
+    print("TEST 4: Multi-file ZIP Analysis")
+    print("=" * 60)
+    import io, zipfile
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr("order-processor.flogo", SAMPLE_FLOGO)
+        zf.writestr("ProcessPayment.bwp", SAMPLE_BWP)
+    zip_bytes = zip_buffer.getvalue()
+    project = analyze_zip(zip_bytes, zip_name="test-project.zip")
+    print(project.to_markdown())
+    assert len(project.flogo_reports) == 1, "Expected 1 Flogo report"
+    assert len(project.bw_reports) == 1, "Expected 1 BW report"
+    assert project.total_errors >= 1, "Expected >=1 errors in project"
+    print(f"[PASS] ZIP analysis: {len(project.flogo_reports)} Flogo, {len(project.bw_reports)} BW, "
+          f"{project.total_errors} error(s), {project.total_warnings} warning(s)")
+
+    print("\n" + "=" * 60)
+    print("TEST 5: New Flogo rules (FLOGO-011, FLOGO-012)")
+    print("=" * 60)
+    SAMPLE_FLOGO_NEW_RULES = """{
+  "name": "test-new-rules",
+  "type": "flogo:app",
+  "version": "1.0.0",
+  "appModel": "1.1.0",
+  "triggers": [{"id": "t1", "ref": "#rest"}],
+  "resources": [{
+    "id": "flow:main",
+    "data": {
+      "name": "main",
+      "tasks": [
+        {"id": "log1", "name": "LogAll", "activity": {
+          "ref": "github.com/project-flogo/contrib/activity/log",
+          "input": {"message": "$flow"}}},
+        {"id": "rest1", "name": "CallPayment", "activity": {
+          "ref": "github.com/project-flogo/contrib/activity/rest",
+          "input": {"method": "POST", "uri": "http://payment-svc/charge", "timeout": 30000}}}
+      ]
+    }
+  }]
+}"""
+    new_rule_report = FlogoAnalyzer().analyze(SAMPLE_FLOGO_NEW_RULES, source="test.flogo")
+    rule_ids = {f.rule_id for f in new_rule_report.findings}
+    assert "FLOGO-011" in rule_ids, f"FLOGO-011 did not fire; got {rule_ids}"
+    assert "FLOGO-012" in rule_ids, f"FLOGO-012 did not fire; got {rule_ids}"
+    print(f"[PASS] FLOGO-011 and FLOGO-012 fired correctly (rules: {rule_ids})")
+
+    print("\n" + "=" * 60)
+    print("TEST 6: RAG Knowledge Search (Weaviate)")
     print("=" * 60)
     try:
         import weaviate
@@ -120,7 +198,7 @@ def run_tests():
         sys.exit(1)
 
     print("\n" + "=" * 60)
-    print("TEST 4: Rule extensibility — add custom rule")
+    print("TEST 7: Rule extensibility — add custom rule")
     print("=" * 60)
     from tibco_agent.analyzers.base import Finding, Rule, Severity
     from tibco_agent.analyzers.flogo_rules import FlogoContext
@@ -155,7 +233,7 @@ def run_tests():
     print("\n" + "=" * 60)
     print("ALL TESTS PASSED")
     print("=" * 60)
-    print("\nRun the UI:  .venv\\Scripts\\streamlit.exe run app.py")
+    print("\nRun the UI:  chainlit run chainlit_app.py")
 
 
 if __name__ == "__main__":

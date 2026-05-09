@@ -8,6 +8,7 @@ from .flogo_rules import (
     HttpSslRule, HttpTimeoutRule, MissingErrorHandlerRule,
     SelectStarRule, SensitiveLogRule, SubflowDepthRule,
     HttpRetryRule, HardcodedCredentialRule, LargeFlowRule, MissingCorrelationIdRule,
+    LargeLogPayloadRule, HardcodedUrlRule,
     AppDescriptionRule, FlowNamingConventionRule, DedicatedConnectorRule,
     SeparationOfConcernsRule, ApiVersioningRule, TimeoutConfiguredRule,
     detect_technologies, detect_pattern, extract_endpoints,
@@ -85,6 +86,8 @@ class FlogoAnalyzer(Analyzer):
             SensitiveLogRule(),
             HttpRetryRule(),
             LargeFlowRule(),
+            LargeLogPayloadRule(),
+            HardcodedUrlRule(),
             # Info-level
             SubflowDepthRule(),
             MissingCorrelationIdRule(),
