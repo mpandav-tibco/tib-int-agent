@@ -65,4 +65,10 @@ class FileSource(KnowledgeSource):
             return "flogo"
         if "bw" in parts or "businessworks" in name or "bwce" in name:
             return "bw"
+        if "ems" in parts or "ems" in name:
+            return "ems"
+        if "ftl" in parts or "ftl" in name:
+            return "ftl"
+        if "eftl" in parts or "eftl" in name:
+            return "eftl"
         return "general"
