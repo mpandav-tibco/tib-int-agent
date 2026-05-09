@@ -283,9 +283,21 @@ def main() -> None:
                         st.session_state._settings_expanded  = True
                         st.rerun()
 
-        if st.button("Clear Chat", use_container_width=True):
-            st.session_state.messages = []
-            st.rerun()
+        btn_col1, btn_col2 = st.columns(2)
+        with btn_col1:
+            if st.button("Retry Last", use_container_width=True,
+                         help="Remove the last answer and re-send the same question"):
+                msgs = st.session_state.get("messages", [])
+                last_user = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), None)
+                if last_user:
+                    if msgs and msgs[-1]["role"] == "assistant":
+                        st.session_state.messages = msgs[:-1]
+                    st.session_state.pending_prompt = last_user
+                st.rerun()
+        with btn_col2:
+            if st.button("Clear Chat", use_container_width=True):
+                st.session_state.messages = []
+                st.rerun()
 
     # ── Chat ──────────────────────────────────────────────────────────────────
     if "messages" not in st.session_state:
