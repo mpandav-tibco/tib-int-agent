@@ -153,6 +153,16 @@ _AGENTIC_CSS = """
     backdrop-filter: blur(12px);
     box-shadow: 0 0 24px rgba(0,87,168,0.12);
 }
+[data-testid="stChatInputContainer"] textarea {
+    font-size: 1.05rem !important;
+    min-height: 54px !important;
+    line-height: 1.6 !important;
+    color: #d0e8ff !important;
+}
+[data-testid="stChatInputContainer"] textarea::placeholder {
+    color: rgba(130,180,240,0.55) !important;
+    font-size: 1.05rem !important;
+}
 
 /* ── Buttons ───────────────────────────────────────────────────────── */
 .stButton > button {
@@ -221,14 +231,15 @@ hr { border-color: rgba(0,87,168,0.18) !important; }
     display: flex;
     align-items: flex-start;
     gap: 10px;
-    margin: 10px 0;
+    margin: 10px auto;
+    max-width: 860px;
     width: 100%;
 }
 .chat-user { flex-direction: row-reverse; }
 .chat-tara { flex-direction: row; }
 .chat-avatar { flex-shrink: 0; width: 40px; height: 40px; }
 .chat-bubble {
-    max-width: 72%;
+    max-width: 78%;
     padding: 12px 16px;
     line-height: 1.65;
     font-size: 0.91rem;
@@ -658,7 +669,7 @@ def main() -> None:
   </div>
   <div class="agent-status">
     <span class="status-dot"></span>
-    Ollama &nbsp;·&nbsp; Weaviate Vector Search &nbsp;·&nbsp; BW &amp; Flogo Specialist
+    TIBCO Integration Specialist &nbsp;·&nbsp; Intelligent Review &amp; Analysis &nbsp;·&nbsp; Multi-Environment Diagnostics
   </div>
 
 </div>
@@ -674,9 +685,9 @@ def main() -> None:
             help="Upload a .flogo file for static analysis — missing error handlers, timeouts, SSL, etc.",
         )
         log_file = st.file_uploader(
-            "Pod log (.log / .txt)",
+            "Integration log (.log / .txt)",
             type=["log", "txt"],
-            help="Upload a Kubernetes pod log from a BW or Flogo container for error diagnosis.",
+            help="Upload a BW or Flogo log from any environment (Kubernetes, on-prem, cloud) for error diagnosis.",
         )
 
         flogo_content = flogo_file.read().decode("utf-8") if flogo_file else ""
@@ -850,27 +861,44 @@ def main() -> None:
         st.session_state.messages = []
 
     if not st.session_state.messages:
-        st.markdown("<div style='height: 40px'></div>", unsafe_allow_html=True)
-        col_l, col_c, col_r = st.columns([1, 2, 1])
+        st.markdown("<div style='height: 32px'></div>", unsafe_allow_html=True)
+        col_l, col_c, col_r = st.columns([1, 3, 1])
         with col_c:
             st.markdown(
-                "<h3 style='text-align:center; color:#003865;'>How can I help you today?</h3>",
+                "<h2 style='text-align:center; color:#d0e8ff; font-size:1.9rem; font-weight:700;"
+                " letter-spacing:-0.5px; margin-bottom:12px;'>How can I help you today?</h2>",
                 unsafe_allow_html=True,
             )
             st.markdown(
-                "<p style='text-align:center; color:#666; margin-bottom:32px;'>"
-                "Ask anything about TIBCO BusinessWorks or Flogo — or use the sidebar to upload "
-                "a <code>.flogo</code> file for review or a pod log for diagnosis.</p>",
+                "<p style='text-align:center; color:#8ab8dc; font-size:1.05rem; line-height:1.7;"
+                " margin-bottom:36px;'>"
+                "Your TIBCO integration and messaging expert — review applications, diagnose logs, "
+                "and answer questions across the full TIBCO platform stack, from any environment. "
+                "Upload files via the sidebar or ask a question directly.</p>",
                 unsafe_allow_html=True,
             )
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.info("**Knowledge Q&A**\n\nAsk about BW/Flogo configuration, patterns, error codes, and best practices.")
+            st.info(
+                "**Integration & Messaging Q&A**\n\n"
+                "Ask anything about TIBCO integration and messaging — middleware patterns, "
+                "EMS topics and queues, FTL/eFTL, connection pooling, Kubernetes deployment, "
+                "error handling, and platform best practices."
+            )
         with c2:
-            st.info("**App Review**\n\nUpload a `.flogo` file → architect-level review: errors, warnings, and strengths.")
+            st.info(
+                "**Application Review**\n\n"
+                "Upload a TIBCO integration application — receive an architect-level review "
+                "covering errors, warnings, missing handlers, security gaps, and overall "
+                "production readiness."
+            )
         with c3:
-            st.info("**Log Diagnosis**\n\nUpload a K8s pod log → root-cause analysis with exact remediation steps.")
-        st.markdown("<div style='height: 40px'></div>", unsafe_allow_html=True)
+            st.info(
+                "**Log Analysis & Diagnostics**\n\n"
+                "Upload integration or messaging logs from any environment — get root-cause "
+                "diagnosis, production impact assessment, and exact remediation steps."
+            )
+        st.markdown("<div style='height: 32px'></div>", unsafe_allow_html=True)
 
     for msg in st.session_state.messages:
         _render_chat_msg(msg["role"], msg["content"])
@@ -903,12 +931,22 @@ def main() -> None:
                 "Run `python ingest.py` first to build the knowledge base."
             )
         except Exception as e:
-            response = (
-                f"**Error:** {e}\n\n"
-                "Check that Ollama is running: `ollama serve`\n"
-                "Check that Weaviate is running: `docker-compose up -d`\n"
-                "Models: `ollama pull llama3.1:8b && ollama pull nomic-embed-text`"
-            )
+            from tibco_agent.config import settings as _s
+            if _s.llm_provider == "ollama":
+                hint = (
+                    "Check that Ollama is running: `ollama serve`\n"
+                    f"Check that the model is pulled: `ollama pull {_s.llm_model}`\n"
+                    "Check that Weaviate is running: `docker-compose up -d`"
+                )
+            else:
+                hint = (
+                    f"Provider: **{_s.llm_provider}** · Model: `{_s.llm_model}`\n\n"
+                    "- Verify your **API Key** is correct in Settings\n"
+                    "- Confirm the model name is available for your provider\n"
+                    "- Check that Weaviate is running: `docker-compose up -d`\n"
+                    "- If you just installed a new provider package, **restart Streamlit**"
+                )
+            response = f"**Error:** {e}\n\n{hint}"
 
         tara_slot.markdown(_chat_bubble_html("assistant", response), unsafe_allow_html=True)
         st.session_state.messages.append({"role": "assistant", "content": response})
