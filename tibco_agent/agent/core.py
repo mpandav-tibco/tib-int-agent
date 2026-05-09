@@ -106,7 +106,7 @@ def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: 
 
     if flogo_content.strip():
         from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
-        report = FlogoAnalyzer().analyze(flogo_content[:30000])
+        report = FlogoAnalyzer().analyze(flogo_content)   # full content — LLM sees the report, not the raw JSON
         parts.append(
             "\n\n## Static Analysis Results (uploaded .flogo file)\n\n"
             + report.to_markdown()
@@ -117,7 +117,7 @@ def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: 
 
     if log_content.strip():
         from tibco_agent.analyzers.log_analyzer import LogAnalyzer
-        report = LogAnalyzer().analyze(log_content[:20000])
+        report = LogAnalyzer().analyze(log_content)   # full content
         parts.append(
             "\n\n## Log Analysis Results (uploaded pod log)\n\n"
             + report.to_markdown()
