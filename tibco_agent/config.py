@@ -16,6 +16,9 @@ class Settings:
     knowledge_path: str
     collection_name: str  # Weaviate class name — must start with uppercase
     request_timeout: float
+    llm_provider: str    # ollama | openai | anthropic | groq | custom
+    llm_api_key: str     # empty for local ollama
+    llm_api_base: str    # custom base URL for groq / custom providers
 
     def validate(self) -> None:
         Path(self.knowledge_path).mkdir(parents=True, exist_ok=True)
@@ -36,4 +39,7 @@ settings = Settings(
     knowledge_path=os.getenv("KNOWLEDGE_PATH", "./data/knowledge"),
     collection_name=os.getenv("COLLECTION_NAME", "TibcoKnowledge"),
     request_timeout=float(os.getenv("REQUEST_TIMEOUT", "180")),
+    llm_provider=os.getenv("LLM_PROVIDER", "ollama"),
+    llm_api_key=os.getenv("LLM_API_KEY", ""),
+    llm_api_base=os.getenv("LLM_API_BASE", ""),
 )

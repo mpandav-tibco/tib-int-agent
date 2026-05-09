@@ -12,6 +12,7 @@ from pathlib import Path
 import streamlit as st
 
 from tibco_agent.report.generator import to_html, to_pdf
+from tibco_agent.agent.core import PROVIDER_MODEL_HINTS
 
 st.set_page_config(
     page_title="TARA — TIBCO AI Review Agent",
@@ -198,7 +199,10 @@ def _init_session_settings() -> None:
     if st.session_state.get("_settings_seeded") and not reset:
         return
     from tibco_agent.config import settings as s
+    st.session_state.s_provider     = s.llm_provider
     st.session_state.s_llm_model    = s.llm_model
+    st.session_state.s_api_key      = s.llm_api_key
+    st.session_state.s_api_base     = s.llm_api_base
     st.session_state.s_embed_model  = s.embed_model
     st.session_state.s_ollama_url   = s.ollama_base_url
     st.session_state.s_weaviate_url = s.weaviate_url
@@ -212,19 +216,28 @@ def _apply_settings() -> bool:
     the agent cache, and persist to .env.  Returns False if validation fails."""
     import tibco_agent.config as _cfg
 
+    provider = st.session_state.s_provider
     required_text = {
         "llm_model":       ("LLM Model",       st.session_state.s_llm_model),
         "embed_model":     ("Embed Model",      st.session_state.s_embed_model),
-        "ollama_base_url": ("Ollama URL",       st.session_state.s_ollama_url),
         "weaviate_url":    ("Weaviate URL",     st.session_state.s_weaviate_url),
         "collection_name": ("Collection Name",  st.session_state.s_collection),
     }
+    if provider == "ollama":
+        required_text["ollama_base_url"] = ("Ollama URL", st.session_state.s_ollama_url)
+    elif provider != "custom":
+        required_text["llm_api_key"] = ("API Key", st.session_state.s_api_key)
+
     errors = [label for _, (label, val) in required_text.items() if not val.strip()]
     if errors:
         st.error(f"Cannot save — required fields are empty: {', '.join(errors)}")
         return False
 
     updates = {k: v.strip() for k, (_, v) in required_text.items()}
+    updates["llm_provider"]    = provider
+    updates["llm_api_key"]     = st.session_state.s_api_key.strip()
+    updates["llm_api_base"]    = st.session_state.s_api_base.strip()
+    updates["ollama_base_url"] = st.session_state.s_ollama_url.strip()
     updates["request_timeout"] = float(st.session_state.s_timeout)
 
     _cfg.settings.apply(**updates)
@@ -280,7 +293,10 @@ def _render_download_buttons() -> None:
 def _persist_env(updates: dict) -> None:
     """Merge updated values into .env (creating the file if absent)."""
     env_map = {
+        "llm_provider":    "LLM_PROVIDER",
         "llm_model":       "LLM_MODEL",
+        "llm_api_key":     "LLM_API_KEY",
+        "llm_api_base":    "LLM_API_BASE",
         "embed_model":     "EMBED_MODEL",
         "ollama_base_url": "OLLAMA_BASE_URL",
         "weaviate_url":    "WEAVIATE_URL",
@@ -575,12 +591,24 @@ def main() -> None:
             if not edit_mode:
                 # ── Read-only view ────────────────────────────────────────────
                 from tibco_agent.config import settings as s
+                _RO_LABELS = {
+                    "ollama": "Ollama (Local)", "openai": "OpenAI",
+                    "anthropic": "Anthropic / Claude",
+                    "groq": "Groq  —  Fast & Free Cloud",
+                    "custom": "Custom (OpenAI-compatible URL)",
+                }
+                st.text_input("Provider",        value=_RO_LABELS.get(s.llm_provider, s.llm_provider), disabled=True)
                 st.text_input("LLM Model",       value=s.llm_model,        disabled=True)
-                st.text_input("Embed Model",      value=s.embed_model,      disabled=True)
-                st.text_input("Ollama URL",       value=s.ollama_base_url,  disabled=True)
-                st.text_input("Weaviate URL",     value=s.weaviate_url,     disabled=True)
-                st.text_input("Collection Name",  value=s.collection_name,  disabled=True)
-                st.text_input("Request Timeout",  value=f"{int(s.request_timeout)}s", disabled=True)
+                if s.llm_api_key:
+                    st.text_input("API Key",     value="••••••••",          disabled=True)
+                if s.llm_provider == "ollama":
+                    st.text_input("Ollama URL",  value=s.ollama_base_url,  disabled=True)
+                if s.llm_api_base:
+                    st.text_input("Base URL",    value=s.llm_api_base,     disabled=True)
+                st.text_input("Embed Model",     value=s.embed_model,      disabled=True)
+                st.text_input("Weaviate URL",    value=s.weaviate_url,     disabled=True)
+                st.text_input("Collection Name", value=s.collection_name,  disabled=True)
+                st.text_input("Request Timeout", value=f"{int(s.request_timeout)}s", disabled=True)
 
                 if st.button("Edit Settings", use_container_width=True):
                     st.session_state._reset_settings     = True  # re-seed before widgets render
@@ -590,13 +618,62 @@ def main() -> None:
 
             else:
                 # ── Edit view ─────────────────────────────────────────────────
+                _PROVIDER_LABELS = {
+                    "ollama":    "Ollama (Local)",
+                    "openai":    "OpenAI",
+                    "anthropic": "Anthropic / Claude",
+                    "groq":      "Groq  —  Fast & Free Cloud",
+                    "custom":    "Custom (OpenAI-compatible URL)",
+                }
+                st.markdown("**LLM Provider**")
+                provider = st.selectbox(
+                    "Provider",
+                    options=list(_PROVIDER_LABELS.keys()),
+                    format_func=_PROVIDER_LABELS.get,
+                    key="s_provider",
+                )
+
                 st.markdown("**Language Model**")
-                st.text_input("LLM Model",    key="s_llm_model",
-                              help=f"Ollama model name. Common: {_LLM_MODELS}")
-                st.text_input("Embed Model",  key="s_embed_model",
-                              help=f"Ollama embedding model. Common: {_EMBED_MODELS}")
-                st.text_input("Ollama URL",   key="s_ollama_url",
-                              help="Base URL of your Ollama server.")
+                st.text_input(
+                    "Model Name", key="s_llm_model",
+                    help=PROVIDER_MODEL_HINTS.get(provider, ""),
+                    placeholder=PROVIDER_MODEL_HINTS.get(provider, ""),
+                )
+
+                if provider == "ollama":
+                    st.text_input("Ollama URL", key="s_ollama_url",
+                                  help="Base URL of your local Ollama server.")
+                elif provider == "groq":
+                    st.info(
+                        "Groq offers **free** cloud inference for Llama, DeepSeek and more — "
+                        "typically 10-20× faster than local Ollama.  \n"
+                        "Get a free API key at [console.groq.com](https://console.groq.com)"
+                    )
+                    st.text_input("Groq API Key", key="s_api_key", type="password",
+                                  help="Starts with gsk_...")
+                elif provider == "openai":
+                    st.text_input("OpenAI API Key", key="s_api_key", type="password",
+                                  help="Starts with sk-...")
+                elif provider == "anthropic":
+                    st.text_input("Anthropic API Key", key="s_api_key", type="password",
+                                  help="Starts with sk-ant-...")
+                elif provider == "custom":
+                    st.text_input("Base URL", key="s_api_base",
+                                  help="OpenAI-compatible API base, e.g. https://your-host/v1")
+                    st.text_input("API Key (optional)", key="s_api_key", type="password")
+
+                # Ollama URL field not relevant for cloud providers — keep state in sync
+                if provider != "ollama":
+                    st.session_state.setdefault("s_ollama_url",
+                                                "http://localhost:11434")
+                if provider not in ("groq", "openai", "anthropic", "custom"):
+                    st.session_state.setdefault("s_api_key", "")
+                if provider != "custom":
+                    st.session_state.setdefault("s_api_base", "")
+
+                st.markdown("**Embedding Model**")
+                st.text_input("Embed Model", key="s_embed_model",
+                              help=f"Ollama embedding model (always local). Common: {_EMBED_MODELS}")
 
                 st.markdown("**Vector Store**")
                 st.text_input("Weaviate URL",    key="s_weaviate_url",
@@ -606,7 +683,7 @@ def main() -> None:
 
                 st.markdown("**Performance**")
                 st.slider("Request Timeout (s)", min_value=30, max_value=600, step=30,
-                          key="s_timeout", help="Max seconds to wait for an Ollama response.")
+                          key="s_timeout", help="Max seconds to wait for a model response.")
 
                 col1, col2 = st.columns(2)
                 with col1:

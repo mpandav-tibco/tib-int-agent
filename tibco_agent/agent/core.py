@@ -72,13 +72,59 @@ _NUM_CTX = 8192
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
+# Preset base URLs for cloud providers
+_PROVIDER_BASE_URLS: dict[str, str] = {
+    "groq":   "https://api.groq.com/openai/v1",
+    "openai": "https://api.openai.com/v1",
+}
+
+# Suggested models shown as hints in the UI (imported by app.py)
+PROVIDER_MODEL_HINTS: dict[str, str] = {
+    "ollama":    "deepseek-r1:latest · llama3.1:8b · mistral:7b",
+    "openai":    "gpt-4o · gpt-4o-mini · gpt-3.5-turbo",
+    "anthropic": "claude-opus-4-7 · claude-sonnet-4-6 · claude-haiku-4-5-20251001",
+    "groq":      "llama-3.3-70b-versatile · deepseek-r1-distill-llama-70b · llama-3.1-8b-instant",
+    "custom":    "model name depends on your provider",
+}
+
 
 def _clean_response(text: str) -> str:
     """Strip <think>...</think> blocks emitted by deepseek-r1 reasoning models."""
     return _THINK_RE.sub("", text).strip()
 
 
-def _make_llm() -> Ollama:
+def _make_llm():
+    provider = settings.llm_provider
+
+    if provider == "anthropic":
+        from llama_index.llms.anthropic import Anthropic
+        return Anthropic(
+            model=settings.llm_model,
+            api_key=settings.llm_api_key,
+            max_tokens=4096,
+        )
+
+    if provider == "openai":
+        from llama_index.llms.openai import OpenAI
+        return OpenAI(
+            model=settings.llm_model,
+            api_key=settings.llm_api_key,
+            max_tokens=4096,
+        )
+
+    if provider in ("groq", "custom"):
+        from llama_index.llms.openai_like import OpenAILike
+        base = settings.llm_api_base or _PROVIDER_BASE_URLS.get(provider, "")
+        return OpenAILike(
+            model=settings.llm_model,
+            api_key=settings.llm_api_key or "na",
+            api_base=base,
+            is_chat_model=True,
+            max_tokens=4096,
+            request_timeout=settings.request_timeout,
+        )
+
+    # Default: local Ollama
     return Ollama(
         model=settings.llm_model,
         base_url=settings.ollama_base_url,
