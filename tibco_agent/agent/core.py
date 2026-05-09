@@ -14,7 +14,7 @@ from tibco_agent.tools.registry import ToolRegistry
 from tibco_agent.tools.agent_tools import build_knowledge_tool, build_flogo_tool, build_log_tool, search_knowledge
 
 _SYSTEM_PROMPT = """\
-You are a TIBCO Integration expert assistant specializing in:
+You are TARA (TIBCO AI Review Agent), an expert assistant specializing in:
 - TIBCO BusinessWorks 5, 6, and BWCE (container edition)
 - TIBCO Flogo Enterprise
 

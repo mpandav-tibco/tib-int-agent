@@ -1,5 +1,5 @@
 """
-TIBCO Integration AI Agent — Streamlit UI
+TARA — TIBCO AI Review Agent — Streamlit UI
 
 Run with:
     streamlit run app.py
@@ -14,7 +14,7 @@ import streamlit as st
 from tibco_agent.report.generator import to_html, to_pdf
 
 st.set_page_config(
-    page_title="TIBCO Integration AI Agent",
+    page_title="TARA — TIBCO AI Review Agent",
     page_icon="🔗",
     layout="wide",
 )
@@ -508,7 +508,10 @@ def main() -> None:
     <div class="m-scan"></div>
   </div>
 
-  <div class="agent-title">TIBCO Integration AI Agent</div>
+  <div class="agent-title">TARA</div>
+  <div style="text-align:center; color:#5a90be; font-size:0.95rem; letter-spacing:3px; text-transform:uppercase; margin-bottom:10px; font-weight:500;">
+    TIBCO AI Review Agent
+  </div>
   <div class="agent-status">
     <span class="status-dot"></span>
     Ollama &nbsp;·&nbsp; Weaviate Vector Search &nbsp;·&nbsp; BW &amp; Flogo Specialist
