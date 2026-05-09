@@ -407,6 +407,110 @@ def _apply_settings() -> bool:
     return True
 
 
+@st.dialog("Settings", width="large")
+def _settings_dialog() -> None:
+    """Settings editor shown as a centered modal dialog."""
+    _init_session_settings()
+
+    _PROVIDER_LABELS = {
+        "ollama":       "Ollama (Local)",
+        "ollama-cloud": "Ollama Cloud  —  Cloud-hosted models",
+        "openai":       "OpenAI",
+        "anthropic":    "Anthropic / Claude",
+        "groq":         "Groq  —  Fast & Free Cloud",
+        "custom":       "Custom (OpenAI-compatible URL)",
+    }
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("**LLM Provider**")
+        provider = st.selectbox(
+            "Provider",
+            options=list(_PROVIDER_LABELS.keys()),
+            format_func=_PROVIDER_LABELS.get,
+            key="s_provider",
+        )
+    with col_b:
+        st.markdown("**Language Model**")
+        st.text_input(
+            "Model Name", key="s_llm_model",
+            help=PROVIDER_MODEL_HINTS.get(provider, ""),
+            placeholder=PROVIDER_MODEL_HINTS.get(provider, ""),
+        )
+
+    if provider == "ollama":
+        st.text_input("Ollama URL", key="s_ollama_url",
+                      help="Base URL of your local Ollama server.")
+    elif provider == "ollama-cloud":
+        st.info(
+            "Ollama Cloud runs models remotely at **https://ollama.com/v1** "
+            "(OpenAI-compatible API).  \n"
+            "Sign in at [ollama.com](https://ollama.com) and generate an API key "
+            "under your account settings.  \n"
+            "⚠️ Large models (e.g. `671b-cloud`) require a paid subscription — "
+            "free-tier models include `llama3.1:8b-instruct-cloud`."
+        )
+        st.text_input("Ollama Cloud API Key", key="s_api_key", type="password",
+                      help="Your ollama.com account API key.")
+        st.session_state.s_api_base = "https://ollama.com/v1"
+    elif provider == "groq":
+        st.info(
+            "Groq offers **free** cloud inference for Llama, DeepSeek and more — "
+            "typically 10-20× faster than local Ollama.  \n"
+            "Get a free API key at [console.groq.com](https://console.groq.com)"
+        )
+        st.text_input("Groq API Key", key="s_api_key", type="password",
+                      help="Starts with gsk_...")
+    elif provider == "openai":
+        st.text_input("OpenAI API Key", key="s_api_key", type="password",
+                      help="Starts with sk-...")
+    elif provider == "anthropic":
+        st.text_input("Anthropic API Key", key="s_api_key", type="password",
+                      help="Starts with sk-ant-...")
+    elif provider == "custom":
+        col_u, col_k = st.columns(2)
+        with col_u:
+            st.text_input("Base URL", key="s_api_base",
+                          help="OpenAI-compatible API base, e.g. https://your-host/v1")
+        with col_k:
+            st.text_input("API Key (optional)", key="s_api_key", type="password")
+
+    if provider != "ollama":
+        st.session_state.setdefault("s_ollama_url", "http://localhost:11434")
+    if provider not in ("groq", "openai", "anthropic", "custom", "ollama-cloud"):
+        st.session_state.setdefault("s_api_key", "")
+    if provider not in ("custom", "ollama-cloud"):
+        st.session_state.setdefault("s_api_base", "")
+
+    st.divider()
+    col_e, col_w, col_c = st.columns(3)
+    with col_e:
+        st.markdown("**Embedding Model**")
+        st.text_input("Embed Model", key="s_embed_model",
+                      help=f"Ollama embedding model (always local). Common: {_EMBED_MODELS}")
+    with col_w:
+        st.markdown("**Vector Store**")
+        st.text_input("Weaviate URL", key="s_weaviate_url")
+        st.text_input("Collection Name", key="s_collection",
+                      help="Must start with an uppercase letter.")
+    with col_c:
+        st.markdown("**Performance**")
+        st.slider("Request Timeout (s)", min_value=30, max_value=600, step=30,
+                  key="s_timeout")
+
+    st.divider()
+    btn1, btn2 = st.columns(2)
+    with btn1:
+        if st.button("Apply & Rebuild", type="primary", use_container_width=True):
+            if _apply_settings():
+                st.toast("Settings saved — agent will rebuild on your next query.", icon="✅")
+                st.rerun()
+    with btn2:
+        if st.button("Cancel", use_container_width=True):
+            st.session_state._reset_settings = True
+            st.rerun()
+
+
 def _render_download_buttons() -> None:
     """Render MD / HTML / PDF download buttons for any available analysis report."""
     reports = []
@@ -742,139 +846,19 @@ def main() -> None:
                 if st.button(label, use_container_width=True):
                     st.session_state.pending_prompt = prompt
 
-        # ── Settings expander ─────────────────────────────────────────────────
-        _init_session_settings()
-        edit_mode = st.session_state.get("_settings_edit_mode", False)
-        expanded  = st.session_state.get("_settings_expanded", False)
-
-        with st.expander("Settings", expanded=expanded):
-            if not edit_mode:
-                # ── Read-only view ────────────────────────────────────────────
-                from tibco_agent.config import settings as s
-                _RO_LABELS = {
-                    "ollama":       "Ollama (Local)",
-                    "ollama-cloud": "Ollama Cloud  —  Cloud-hosted models",
-                    "openai":       "OpenAI",
-                    "anthropic":    "Anthropic / Claude",
-                    "groq":         "Groq  —  Fast & Free Cloud",
-                    "custom":       "Custom (OpenAI-compatible URL)",
-                }
-                st.text_input("Provider",        value=_RO_LABELS.get(s.llm_provider, s.llm_provider), disabled=True)
-                st.text_input("LLM Model",       value=s.llm_model,        disabled=True)
-                if s.llm_api_key:
-                    st.text_input("API Key",     value="••••••••",          disabled=True)
-                if s.llm_provider == "ollama":
-                    st.text_input("Ollama URL",  value=s.ollama_base_url,  disabled=True)
-                if s.llm_api_base:
-                    st.text_input("Base URL",    value=s.llm_api_base,     disabled=True)
-                st.text_input("Embed Model",     value=s.embed_model,      disabled=True)
-                st.text_input("Weaviate URL",    value=s.weaviate_url,     disabled=True)
-                st.text_input("Collection Name", value=s.collection_name,  disabled=True)
-                st.text_input("Request Timeout", value=f"{int(s.request_timeout)}s", disabled=True)
-
-                if st.button("Edit Settings", use_container_width=True):
-                    st.session_state._reset_settings     = True  # re-seed before widgets render
-                    st.session_state._settings_edit_mode = True
-                    st.session_state._settings_expanded  = True
-                    st.rerun()
-
-            else:
-                # ── Edit view ─────────────────────────────────────────────────
-                _PROVIDER_LABELS = {
-                    "ollama":       "Ollama (Local)",
-                    "ollama-cloud": "Ollama Cloud  —  Cloud-hosted models",
-                    "openai":       "OpenAI",
-                    "anthropic":    "Anthropic / Claude",
-                    "groq":         "Groq  —  Fast & Free Cloud",
-                    "custom":       "Custom (OpenAI-compatible URL)",
-                }
-                st.markdown("**LLM Provider**")
-                provider = st.selectbox(
-                    "Provider",
-                    options=list(_PROVIDER_LABELS.keys()),
-                    format_func=_PROVIDER_LABELS.get,
-                    key="s_provider",
-                )
-
-                st.markdown("**Language Model**")
-                st.text_input(
-                    "Model Name", key="s_llm_model",
-                    help=PROVIDER_MODEL_HINTS.get(provider, ""),
-                    placeholder=PROVIDER_MODEL_HINTS.get(provider, ""),
-                )
-
-                if provider == "ollama":
-                    st.text_input("Ollama URL", key="s_ollama_url",
-                                  help="Base URL of your local Ollama server.")
-                elif provider == "ollama-cloud":
-                    st.info(
-                        "Ollama Cloud runs models remotely at **https://ollama.com/v1** "
-                        "(OpenAI-compatible API).  \n"
-                        "Sign in at [ollama.com](https://ollama.com) and generate an API key "
-                        "under your account settings.  \n"
-                        "⚠️ Large models (e.g. `671b-cloud`) require a paid subscription — "
-                        "free-tier models include `llama3.1:8b-instruct-cloud`."
-                    )
-                    st.text_input("Ollama Cloud API Key", key="s_api_key", type="password",
-                                  help="Your ollama.com account API key.")
-                    # Base URL is fixed for Ollama Cloud — keep state in sync
-                    st.session_state.s_api_base = "https://ollama.com/v1"
-                elif provider == "groq":
-                    st.info(
-                        "Groq offers **free** cloud inference for Llama, DeepSeek and more — "
-                        "typically 10-20× faster than local Ollama.  \n"
-                        "Get a free API key at [console.groq.com](https://console.groq.com)"
-                    )
-                    st.text_input("Groq API Key", key="s_api_key", type="password",
-                                  help="Starts with gsk_...")
-                elif provider == "openai":
-                    st.text_input("OpenAI API Key", key="s_api_key", type="password",
-                                  help="Starts with sk-...")
-                elif provider == "anthropic":
-                    st.text_input("Anthropic API Key", key="s_api_key", type="password",
-                                  help="Starts with sk-ant-...")
-                elif provider == "custom":
-                    st.text_input("Base URL", key="s_api_base",
-                                  help="OpenAI-compatible API base, e.g. https://your-host/v1")
-                    st.text_input("API Key (optional)", key="s_api_key", type="password")
-
-                # Keep non-relevant fields in sync so they don't carry stale values
-                if provider != "ollama":
-                    st.session_state.setdefault("s_ollama_url", "http://localhost:11434")
-                if provider not in ("groq", "openai", "anthropic", "custom", "ollama-cloud"):
-                    st.session_state.setdefault("s_api_key", "")
-                if provider not in ("custom", "ollama-cloud"):
-                    st.session_state.setdefault("s_api_base", "")
-
-                st.markdown("**Embedding Model**")
-                st.text_input("Embed Model", key="s_embed_model",
-                              help=f"Ollama embedding model (always local). Common: {_EMBED_MODELS}")
-
-                st.markdown("**Vector Store**")
-                st.text_input("Weaviate URL",    key="s_weaviate_url",
-                              help="URL of your Weaviate instance.")
-                st.text_input("Collection Name", key="s_collection",
-                              help="Weaviate class name — must start with an uppercase letter.")
-
-                st.markdown("**Performance**")
-                st.slider("Request Timeout (s)", min_value=30, max_value=600, step=30,
-                          key="s_timeout", help="Max seconds to wait for a model response.")
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("Apply & Rebuild", type="primary", use_container_width=True):
-                        if _apply_settings():
-                            st.session_state._settings_edit_mode = False
-                            st.session_state._settings_expanded  = False
-                            st.toast("Settings saved — agent will rebuild on your next query.",
-                                     icon="✅")
-                            st.rerun()
-                with col2:
-                    if st.button("Cancel", use_container_width=True):
-                        st.session_state._reset_settings     = True  # re-seed on next rerun
-                        st.session_state._settings_edit_mode = False
-                        st.session_state._settings_expanded  = True
-                        st.rerun()
+        # ── Settings — opens as centered modal dialog ─────────────────────────
+        from tibco_agent.config import settings as _s
+        _PROVIDER_SHORT = {
+            "ollama": "Ollama", "ollama-cloud": "Ollama Cloud",
+            "openai": "OpenAI", "anthropic": "Anthropic",
+            "groq": "Groq", "custom": "Custom",
+        }
+        st.caption(
+            f"**{_PROVIDER_SHORT.get(_s.llm_provider, _s.llm_provider)}** · "
+            f"`{_s.llm_model}`"
+        )
+        if st.button("Settings", use_container_width=True):
+            _settings_dialog()
 
         btn_col1, btn_col2 = st.columns(2)
         with btn_col1:
