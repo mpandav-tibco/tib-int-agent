@@ -130,8 +130,29 @@ html, body { color-scheme: light !important; }
     box-shadow: 2px 0 18px rgba(0,56,101,0.08);
 }
 
-/* ── Main content area ─────────────────────────────────────────────── */
-.block-container { background: transparent !important; }
+/* ── Main content area — capped so it never stretches edge-to-edge ── */
+.block-container {
+    background: transparent !important;
+    max-width: 1080px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+}
+
+/* ── Chat input — centered & constrained at all viewport widths ─────── */
+[data-testid="stBottom"] {
+    background: linear-gradient(to top, #eef3f9 65%, transparent) !important;
+    padding: 6px 0 14px !important;
+}
+[data-testid="stBottom"] > div {
+    max-width: 900px !important;
+    width: 100% !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding: 0 16px !important;
+    box-sizing: border-box !important;
+}
 
 /* ── Sidebar labels & text ─────────────────────────────────────────── */
 [data-testid="stSidebar"] label,
@@ -150,18 +171,20 @@ html, body { color-scheme: light !important; }
     background: #ffffff !important;
     border: 1.5px solid #b8d0e8 !important;
     border-radius: 16px !important;
-    box-shadow: 0 4px 20px rgba(0,56,101,0.10);
+    box-shadow: 0 4px 24px rgba(0,56,101,0.12);
+    width: 100% !important;
 }
 [data-testid="stChatInputContainer"] textarea {
-    font-size: 1.05rem !important;
-    min-height: 54px !important;
-    line-height: 1.6 !important;
+    font-size: 1.08rem !important;
+    min-height: 62px !important;
+    line-height: 1.65 !important;
     color: #1a2740 !important;
     background: transparent !important;
+    padding: 14px 16px !important;
 }
 [data-testid="stChatInputContainer"] textarea::placeholder {
-    color: rgba(0,56,101,0.38) !important;
-    font-size: 1.05rem !important;
+    color: rgba(0,56,101,0.36) !important;
+    font-size: 1.08rem !important;
 }
 
 /* ── Buttons ───────────────────────────────────────────────────────── */
