@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 
 from llama_index.core import Settings
@@ -64,9 +65,15 @@ def _classify_intent(question: str) -> str:
         return "review"
     return "specific"
 
-# num_ctx limits the KV cache — reduces RAM from ~20GB to ~5GB for llama3.1:8b
-_NUM_CTX = int(settings.request_timeout)  # reuse slot; default via env NUM_CTX
-_NUM_CTX = 4096
+# deepseek-r1 generates long reasoning chains before the answer; 8192 avoids truncation.
+_NUM_CTX = 8192
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _clean_response(text: str) -> str:
+    """Strip <think>...</think> blocks emitted by deepseek-r1 reasoning models."""
+    return _THINK_RE.sub("", text).strip()
 
 
 def _make_llm() -> Ollama:
@@ -138,9 +145,11 @@ def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: 
     kb = search_knowledge(question)
     if kb:
         parts.append(
-            "\n\n## Knowledge Base\n"
-            "_The following excerpts are retrieved from the TIBCO documentation knowledge base. "
-            "Use them as the primary source. Do not contradict them._\n\n" + kb
+            "\n\n## Knowledge Base Excerpts\n"
+            "_Retrieved from ingested TIBCO documentation. Where these excerpts fully address "
+            "the question, prefer them. Where they are incomplete or silent on the topic, "
+            "supplement with your expert training knowledge and make clear which parts come "
+            "from documentation and which from general knowledge._\n\n" + kb
         )
 
     intent = _classify_intent(question)
@@ -188,4 +197,4 @@ def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: 
 
     loop = _get_loop()
     future = asyncio.run_coroutine_threadsafe(_ask_async(agent, "\n".join(parts)), loop)
-    return future.result(timeout=600)
+    return _clean_response(future.result(timeout=600))

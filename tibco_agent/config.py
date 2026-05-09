@@ -30,7 +30,7 @@ class Settings:
 
 settings = Settings(
     ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-    llm_model=os.getenv("LLM_MODEL", "llama3.1:8b"),
+    llm_model=os.getenv("LLM_MODEL", "deepseek-r1:latest"),
     embed_model=os.getenv("EMBED_MODEL", "nomic-embed-text"),
     weaviate_url=os.getenv("WEAVIATE_URL", "http://localhost:8080"),
     knowledge_path=os.getenv("KNOWLEDGE_PATH", "./data/knowledge"),
