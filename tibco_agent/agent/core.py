@@ -24,13 +24,40 @@ Your responsibilities:
 4. Provide performance tuning, troubleshooting, and architectural guidance
 
 Rules:
-- Always use the provided tools for knowledge lookups. Do not answer from memory for specific error codes, property names, or config values.
-- When the prompt already contains a "## Static Analysis Results" or "## Log Analysis Results" section, treat those findings as authoritative facts. Do NOT re-describe the app structure or log content — go straight to what needs to be fixed and why.
-- Structure your answer: lead with a one-line verdict, then list issues by severity (Errors first, then Warnings), then give concrete next steps.
-- Cite the specific flow name, activity name, or log line number for every issue.
+- Match response length to the question. A specific question ("which pattern?", "how many flows?")
+  gets a direct 1–3 sentence answer. A review request ("review this", "is this production-ready?")
+  gets a full structured analysis. Never give a full review when a one-liner will do.
+- Always use the provided tools for knowledge lookups. Do not answer from memory for specific
+  error codes, property names, or config values.
+- When the prompt contains a "## App Review" section, treat those findings as authoritative facts.
+  Only surface the parts relevant to the question asked.
+- Cite the specific flow name, activity name, or log line number when relevant.
 - Prioritize errors over warnings. Be concise and actionable.
 - If you are not confident, say so. Do not invent configuration values or API names.
 """
+
+# ── Intent classification ─────────────────────────────────────────────────────
+# Determines how much of the analysis report to surface in the response.
+# Runs locally — no extra LLM call.
+
+_REVIEW_SIGNALS = frozenset({
+    "review", "analyse", "analyze", "audit", "assess", "evaluate",
+    "handled right", "handled correctly", "handled in right",
+    "is this right", "is this correct", "is this good", "is this ok",
+    "what are the issues", "what's wrong", "whats wrong",
+    "all issues", "all problems", "all findings", "any issues", "any problems",
+    "tell me all", "comprehensive", "full review",
+    "production ready", "production-ready", "ready for production",
+    "check this app", "check the app",
+})
+
+
+def _classify_intent(question: str) -> str:
+    """Return 'review' for full analysis requests, 'specific' for targeted questions."""
+    q = question.lower()
+    if any(signal in q for signal in _REVIEW_SIGNALS):
+        return "review"
+    return "specific"
 
 # num_ctx limits the KV cache — reduces RAM from ~20GB to ~5GB for llama3.1:8b
 _NUM_CTX = int(settings.request_timeout)  # reuse slot; default via env NUM_CTX
@@ -104,33 +131,48 @@ def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: 
     # tool, especially with smaller local models like llama3.1:8b.
     parts = [question]
 
+    intent = _classify_intent(question)
+
     if flogo_content.strip():
         from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
-        report = FlogoAnalyzer().analyze(flogo_content)   # full content — LLM sees the report, not the raw JSON
-        parts.append(
-            "\n\n## Static Analysis Results (uploaded .flogo file)\n\n"
-            + report.to_markdown()
-            + "\n\n---\n"
-            "You are a senior TIBCO Integration architect reviewing this application. "
-            "Using the structured analysis above, write a comprehensive review covering:\n"
-            "1. **Overall verdict** — one paragraph on whether the implementation is production-ready.\n"
-            "2. **What is well implemented** — acknowledge the strengths from the analysis.\n"
-            "3. **Critical issues** — explain each error: why it matters in production, not just what it is.\n"
-            "4. **Improvements & recommendations** — beyond the detected issues: patterns, scalability, observability, security.\n"
-            "Be specific. Cite flow names, activity names, and endpoint paths. "
-            "Write as a peer talking to a developer, not as a checklist generator."
-        )
+        report = FlogoAnalyzer().analyze(flogo_content)
+        if intent == "review":
+            suffix = (
+                "\n\n---\n"
+                "You are a senior TIBCO Integration architect reviewing this application. "
+                "Using the structured analysis above, write a comprehensive review covering:\n"
+                "1. **Overall verdict** — one paragraph on whether the implementation is production-ready.\n"
+                "2. **What is well implemented** — acknowledge the strengths from the analysis.\n"
+                "3. **Critical issues** — explain each error: why it matters in production, not just what it is.\n"
+                "4. **Improvements & recommendations** — beyond the detected issues: patterns, scalability, observability, security.\n"
+                "Be specific. Cite flow names, activity names, and endpoint paths. "
+                "Write as a peer talking to a developer, not as a checklist generator."
+            )
+        else:
+            suffix = (
+                "\n\n---\n"
+                "The analysis report above is context. Answer the user's specific question directly and concisely — "
+                "one short paragraph or a brief list, whichever fits. "
+                "Do NOT produce a full review. Only surface the parts of the analysis relevant to the question."
+            )
+        parts.append("\n\n" + report.to_markdown() + suffix)
 
     if log_content.strip():
         from tibco_agent.analyzers.log_analyzer import LogAnalyzer
-        report = LogAnalyzer().analyze(log_content)   # full content
-        parts.append(
-            "\n\n## Log Analysis Results (uploaded pod log)\n\n"
-            + report.to_markdown()
-            + "\n\n---\nUsing the findings above, answer the user's question directly. "
-            "Lead with root cause, then give concrete remediation steps with log line references. "
-            "Do NOT re-describe the log content."
-        )
+        report = LogAnalyzer().analyze(log_content)
+        if intent == "review":
+            log_suffix = (
+                "\n\n---\nDiagnose these pod log findings as a senior site-reliability engineer. "
+                "For each issue: explain the root cause, the production impact, and the exact remediation steps. "
+                "Cite log line numbers. Prioritise errors over warnings."
+            )
+        else:
+            log_suffix = (
+                "\n\n---\n"
+                "The log analysis above is context. Answer the user's specific question directly and concisely. "
+                "Do NOT list every finding — only surface the parts relevant to the question."
+            )
+        parts.append("\n\n" + report.to_markdown() + log_suffix)
 
     loop = _get_loop()
     future = asyncio.run_coroutine_threadsafe(_ask_async(agent, "\n".join(parts)), loop)
