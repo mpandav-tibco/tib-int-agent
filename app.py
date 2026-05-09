@@ -317,63 +317,203 @@ def main() -> None:
     st.markdown(_AGENTIC_CSS, unsafe_allow_html=True)
     st.markdown("""
 <style>
-@keyframes mascotPulse {
-    0%, 100% { transform: scale(1) rotate(-3deg); filter: drop-shadow(0 0 8px rgba(0,140,255,0.5)); }
-    50%       { transform: scale(1.08) rotate(3deg); filter: drop-shadow(0 0 20px rgba(0,140,255,0.9)); }
+/* ── Mascot layout ────────────────────────────────────────────── */
+.mascot-wrap {
+    position: relative;
+    width: 180px;
+    height: 180px;
+    margin: 0 auto 24px;
 }
-@keyframes titleGlow {
-    0%, 100% { text-shadow: 0 0 20px rgba(0,140,255,0.3); }
-    50%       { text-shadow: 0 0 40px rgba(0,140,255,0.7), 0 0 80px rgba(0,87,168,0.3); }
+/* Pulse rings expanding outward */
+.m-pulse { position: absolute; border-radius: 50%; border: 1px solid rgba(0,140,255,0.25); }
+.m-pulse-1 { inset: -16px; animation: mRingExpand 3.0s ease-out infinite; }
+.m-pulse-2 { inset: -8px;  animation: mRingExpand 3.0s ease-out infinite 0.9s; }
+@keyframes mRingExpand {
+    0%   { transform: scale(0.85); opacity: 0.7; }
+    100% { transform: scale(1.25); opacity: 0; }
 }
-@keyframes statusPulse {
-    0%, 100% { opacity: 1; box-shadow: 0 0 6px #00c853; }
-    50%       { opacity: 0.5; box-shadow: 0 0 12px #00c853; }
+/* Outer spinning dashed ring */
+.m-ring-outer {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px dashed rgba(0,140,255,0.45);
+    animation: spinCW 14s linear infinite;
 }
-.agent-header {
-    text-align: center;
-    padding: 32px 0 16px 0;
+/* Three node dots on the outer ring */
+.m-node {
+    position: absolute;
+    width: 9px; height: 9px;
+    background: #0099ff;
+    border-radius: 50%;
+    box-shadow: 0 0 10px #0099ff, 0 0 20px rgba(0,153,255,0.4);
 }
-.agent-mascot {
-    font-size: 72px;
-    display: block;
-    animation: mascotPulse 3s ease-in-out infinite;
-    margin-bottom: 8px;
+.m-node-1 { top: -4px;  left: calc(50% - 4px); }
+.m-node-2 { bottom: -4px; left: calc(50% - 4px); }
+.m-node-3 { left: -4px; top: calc(50% - 4px); }
+/* Inner counter-spinning ring */
+.m-ring-inner {
+    position: absolute;
+    inset: 24px;
+    border-radius: 50%;
+    border: 1px dashed rgba(0,87,168,0.5);
+    animation: spinCCW 9s linear infinite;
 }
-.agent-title {
-    font-size: 2.8rem;
-    font-weight: 800;
-    background: linear-gradient(135deg, #60b4ff 0%, #90ceff 40%, #0057a8 70%, #c8dfff 100%);
+.m-node-inner {
+    position: absolute;
+    width: 6px; height: 6px;
+    background: #60b4ff;
+    border-radius: 50%;
+    box-shadow: 0 0 6px #60b4ff;
+    top: -3px; left: calc(50% - 3px);
+}
+/* Ambient core glow */
+.m-glow {
+    position: absolute;
+    inset: 36px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(0,140,255,0.22) 0%, transparent 70%);
+    animation: glowPulse 3s ease-in-out infinite;
+}
+/* Hexagonal AI core */
+.m-hex {
+    position: absolute;
+    inset: 40px;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    background: linear-gradient(145deg, rgba(0,25,60,0.97) 0%, rgba(0,10,30,0.95) 100%);
+    border: none;
+    animation: hexGlow 3s ease-in-out infinite;
+}
+/* Hex border using a layered hex behind */
+.m-hex-border {
+    position: absolute;
+    inset: 37px;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    background: linear-gradient(135deg, rgba(0,140,255,0.7), rgba(0,56,101,0.5));
+    animation: hexGlow 3s ease-in-out infinite;
+}
+/* Circuit lines inside hex */
+.m-circuit {
+    position: absolute;
+    inset: 40px;
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    overflow: hidden;
+}
+/* AI text */
+.m-ai-text {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Courier New', monospace;
+    font-size: 30px;
+    font-weight: 900;
+    background: linear-gradient(135deg, #fff 0%, #90d0ff 50%, #60b4ff 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+    filter: drop-shadow(0 0 8px rgba(0,180,255,0.9));
+    letter-spacing: 2px;
+}
+/* Horizontal scan line sweeping top-to-bottom */
+.m-scan {
+    position: absolute;
+    left: 40px; right: 40px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(0,220,255,0.8), transparent);
+    top: 40px;
+    animation: scanLine 2.5s ease-in-out infinite;
+    filter: blur(0.5px);
+}
+@keyframes scanLine {
+    0%   { top: 42px;  opacity: 0; }
+    8%   { opacity: 1; }
+    92%  { opacity: 1; }
+    100% { top: 138px; opacity: 0; }
+}
+@keyframes spinCW   { to { transform: rotate( 360deg); } }
+@keyframes spinCCW  { to { transform: rotate(-360deg); } }
+@keyframes glowPulse {
+    0%,100% { opacity: 0.5; transform: scale(1);   }
+    50%     { opacity: 1;   transform: scale(1.12); }
+}
+@keyframes hexGlow {
+    0%,100% { filter: drop-shadow(0 0 6px  rgba(0,140,255,0.4)); }
+    50%     { filter: drop-shadow(0 0 16px rgba(0,180,255,0.85)); }
+}
+
+/* ── Title ────────────────────────────────────────────────────── */
+.agent-title {
+    text-align: center;
+    font-size: 3.8rem;
+    font-weight: 900;
+    background: linear-gradient(135deg, #c8e8ff 0%, #60b4ff 35%, #0088ff 65%, #e0f2ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin: 0 0 10px 0;
+    letter-spacing: -1.5px;
+    line-height: 1.05;
     animation: titleGlow 4s ease-in-out infinite;
-    letter-spacing: -0.5px;
-    margin: 0;
 }
+@keyframes titleGlow {
+    0%,100% { filter: drop-shadow(0 0 8px  rgba(0,140,255,0.25)); }
+    50%     { filter: drop-shadow(0 0 22px rgba(0,180,255,0.65)); }
+}
+
+/* ── Status bar ───────────────────────────────────────────────── */
 .agent-status {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 6px;
-    margin-top: 10px;
-    color: #7aafd4;
-    font-size: 0.82rem;
-    letter-spacing: 0.5px;
+    justify-content: center;
+    gap: 8px;
+    color: #6a9fc8;
+    font-size: 0.78rem;
+    letter-spacing: 0.9px;
+    text-transform: uppercase;
 }
-.agent-status-dot {
+.status-dot {
     width: 8px; height: 8px;
-    background: #00c853;
+    background: #00e676;
     border-radius: 50%;
-    display: inline-block;
-    animation: statusPulse 2s ease-in-out infinite;
+    flex-shrink: 0;
+    animation: dotPulse 2s ease-in-out infinite;
+    box-shadow: 0 0 8px #00e676;
+}
+@keyframes dotPulse {
+    0%,100% { box-shadow: 0 0 5px #00e676; opacity: 1; }
+    50%     { box-shadow: 0 0 16px #00e676, 0 0 30px rgba(0,230,118,0.3); opacity: 0.65; }
 }
 </style>
-<div class="agent-header">
-  <span class="agent-mascot">🤖</span>
-  <p class="agent-title">TIBCO Integration AI Agent</p>
-  <div class="agent-status">
-    <span class="agent-status-dot"></span>
-    Powered by Ollama &nbsp;·&nbsp; Weaviate vector search &nbsp;·&nbsp; BusinessWorks &amp; Flogo specialist
+
+<div style="text-align:center; padding: 32px 0 16px 0;">
+
+  <!-- Techy SVG-style mascot -->
+  <div class="mascot-wrap">
+    <div class="m-pulse m-pulse-1"></div>
+    <div class="m-pulse m-pulse-2"></div>
+    <div class="m-ring-outer">
+      <div class="m-node m-node-1"></div>
+      <div class="m-node m-node-2"></div>
+      <div class="m-node m-node-3"></div>
+    </div>
+    <div class="m-ring-inner">
+      <div class="m-node-inner"></div>
+    </div>
+    <div class="m-glow"></div>
+    <div class="m-hex-border"></div>
+    <div class="m-hex"></div>
+    <div class="m-ai-text">AI</div>
+    <div class="m-scan"></div>
   </div>
+
+  <div class="agent-title">TIBCO Integration AI Agent</div>
+  <div class="agent-status">
+    <span class="status-dot"></span>
+    Ollama &nbsp;·&nbsp; Weaviate Vector Search &nbsp;·&nbsp; BW &amp; Flogo Specialist
+  </div>
+
 </div>
 """, unsafe_allow_html=True)
 
