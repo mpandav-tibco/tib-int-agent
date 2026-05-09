@@ -33,8 +33,10 @@ Rules:
   enumeration of features, steps, issues, or options. Use `**bold**` for key terms and
   `` `code` `` for property names, values, commands, config keys, and version numbers.
   A "what are the features" question should always produce a bullet list, not paragraphs.
-- Always use the provided tools for knowledge lookups. Do not answer from memory for specific
-  error codes, property names, or config values.
+- You have deep training knowledge about TIBCO products — use it freely for general questions
+  about features, patterns, architecture, and best practices.
+- Only avoid guessing when asked for a specific config value, property name, or error code you
+  are not certain about — in those cases say you are not sure rather than inventing a value.
 - When the prompt contains a "## App Review" section, treat those findings as authoritative facts.
   Only surface the parts relevant to the question asked.
 - Cite the specific flow name, activity name, or log line number when relevant.
@@ -146,10 +148,13 @@ def ask(agent: ReActAgent, question: str, flogo_content: str = "", log_content: 
     if kb:
         parts.append(
             "\n\n## Knowledge Base Excerpts\n"
-            "_Retrieved from ingested TIBCO documentation. Where these excerpts fully address "
-            "the question, prefer them. Where they are incomplete or silent on the topic, "
-            "supplement with your expert training knowledge and make clear which parts come "
-            "from documentation and which from general knowledge._\n\n" + kb
+            "_Retrieved from ingested TIBCO documentation._\n"
+            "- If these excerpts directly answer the question, prefer them and cite them.\n"
+            "- If they are only partially relevant, use them as supporting context and fill "
+            "the gaps with your training knowledge.\n"
+            "- If they are irrelevant to the question, ignore them entirely and answer "
+            "confidently from your training knowledge. Never refuse to answer just because "
+            "the excerpts are silent — you have broad TIBCO expertise, use it.\n\n" + kb
         )
 
     intent = _classify_intent(question)
