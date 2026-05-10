@@ -24,6 +24,7 @@ from tibco_agent.agent.core import PROVIDER_MODEL_HINTS, build_prompt, _clean_re
 from tibco_agent.config import settings as _cfg
 from tibco_agent import feedback as _feedback
 from tibco_agent.report.generator import to_html, to_pdf
+from agent_store.store import store as _agent_store
 
 log = logging.getLogger(__name__)
 
@@ -177,6 +178,33 @@ async def on_chat_start() -> None:
         ]
     ).send()
 
+    # ── Load agent config from ?agent_id= URL param (AgentForge) ─────────────
+    agent_config = None
+    try:
+        query_params = cl.context.session.client_type  # may not always carry params
+    except Exception:
+        query_params = None
+
+    # Chainlit 2.x exposes URL query params via the startup request headers.
+    # The agent_id is also injectable via AGENT_ID env var for Docker deployments.
+    raw_agent_id = os.getenv("AGENT_ID", "")
+    try:
+        headers = getattr(cl.context.session, "headers", {}) or {}
+        referer = headers.get("referer", "") or headers.get("Referer", "")
+        if "agent_id=" in referer:
+            raw_agent_id = referer.split("agent_id=")[-1].split("&")[0].strip()
+    except Exception:
+        pass
+
+    if raw_agent_id:
+        agent_config = _agent_store.get(raw_agent_id)
+        if agent_config:
+            log.info("Loaded agent config: %s (%s)", agent_config.name, raw_agent_id)
+        else:
+            log.warning("Unknown agent_id=%r — falling back to TARA defaults", raw_agent_id)
+
+    cl.user_session.set("agent_config", agent_config)
+
     loop = asyncio.get_event_loop()
     degraded = not await loop.run_in_executor(None, _init_llm_safe)
     cl.user_session.set("session_cfg", None)  # populated by on_settings_update
@@ -191,8 +219,9 @@ async def on_chat_start() -> None:
     cl.user_session.set("req_count", 0)   # per-session request counter for rate limiting
 
     if degraded:
+        agent_label = agent_config.name if agent_config else "TARA"
         await cl.Message(
-            author="TARA",
+            author=agent_label,
             content=(
                 "> ⚠️ **Degraded mode** — agent failed to initialise (LLM or Weaviate may be unavailable). "
                 "File analysis still works, but KB search and LLM responses are disabled. "
@@ -200,32 +229,44 @@ async def on_chat_start() -> None:
             ),
         ).send()
 
-    await cl.Message(
-        author="TARA",
-        content=(
-            "## Hi, I'm TARA — your TIBCO AI Review Agent 👋\n\n"
-            "I'm an expert assistant for **TIBCO BusinessWorks**, **Flogo Enterprise**, "
-            "**EMS**, and **Messaging** (FTL, eFTL, Pulsar).\n\n"
-            "**What I can do:**\n\n"
-            "| Capability | How to use |\n"
-            "|---|---|\n"
-            "| Answer TIBCO questions | Just type your question |\n"
-            "| Review a Flogo app (38 checks) | Upload a `.flogo` file |\n"
-            "| Review a BW process | Upload a `.bwp` or `.xml` file |\n"
-            "| Diagnose pod / app logs | Upload a `.log` or `.txt` file |\n"
-            "| Analyse Kubernetes manifests | Upload a `.yaml` or `.yml` file |\n"
-            "| Review EMS config | Upload a `tibemsd.conf` file |\n"
-            "| Analyse a full project | Upload a `.zip` archive |\n\n"
-            "**Quick start — click a prompt to begin:**\n\n"
-            "- 🔍 *Review the uploaded .flogo file for issues, security gaps, and production readiness.*\n"
-            "- 🔍 *Review the uploaded .bwp BusinessWorks process for fault handling and best practices.*\n"
-            "- 🩺 *Diagnose the errors in the uploaded pod log. Give root cause and remediation steps.*\n"
-            "- 🚀 *Run me through a pre-deployment checklist for a TIBCO application going to production.*\n"
-            "- 🔧 *Help me troubleshoot a Kubernetes pod that won't start.*\n"
-            "- 📡 *Help me diagnose a TIBCO EMS or messaging connection issue.*\n\n"
-            "_Open ⚙ Settings to switch LLM provider or model._"
-        ),
-    ).send()
+    if agent_config:
+        # Custom agent welcome
+        await cl.Message(
+            author=agent_config.name,
+            content=(
+                f"## Hi, I'm **{agent_config.name}** — {agent_config.title}\n\n"
+                f"{agent_config.description}\n\n"
+                "_Upload files or type a question to get started._"
+            ),
+        ).send()
+    else:
+        # Default TARA welcome
+        await cl.Message(
+            author="TARA",
+            content=(
+                "## Hi, I'm TARA — your TIBCO AI Review Agent 👋\n\n"
+                "I'm an expert assistant for **TIBCO BusinessWorks**, **Flogo Enterprise**, "
+                "**EMS**, and **Messaging** (FTL, eFTL, Pulsar).\n\n"
+                "**What I can do:**\n\n"
+                "| Capability | How to use |\n"
+                "|---|---|\n"
+                "| Answer TIBCO questions | Just type your question |\n"
+                "| Review a Flogo app (38 checks) | Upload a `.flogo` file |\n"
+                "| Review a BW process | Upload a `.bwp` or `.xml` file |\n"
+                "| Diagnose pod / app logs | Upload a `.log` or `.txt` file |\n"
+                "| Analyse Kubernetes manifests | Upload a `.yaml` or `.yml` file |\n"
+                "| Review EMS config | Upload a `tibemsd.conf` file |\n"
+                "| Analyse a full project | Upload a `.zip` archive |\n\n"
+                "**Quick start — click a prompt to begin:**\n\n"
+                "- 🔍 *Review the uploaded .flogo file for issues, security gaps, and production readiness.*\n"
+                "- 🔍 *Review the uploaded .bwp BusinessWorks process for fault handling and best practices.*\n"
+                "- 🩺 *Diagnose the errors in the uploaded pod log. Give root cause and remediation steps.*\n"
+                "- 🚀 *Run me through a pre-deployment checklist for a TIBCO application going to production.*\n"
+                "- 🔧 *Help me troubleshoot a Kubernetes pod that won't start.*\n"
+                "- 📡 *Help me diagnose a TIBCO EMS or messaging connection issue.*\n\n"
+                "_Open ⚙ Settings to switch LLM provider or model._"
+            ),
+        ).send()
 
 
 # ── Settings update ───────────────────────────────────────────────────────────
@@ -273,10 +314,15 @@ async def on_settings_update(new_settings: dict) -> None:
 from tibco_agent.streaming import ThinkFilter as _ThinkFilter  # noqa: E402
 
 
-async def _stream_into(prompt: str, out_msg: cl.Message) -> tuple[str, bool]:
+async def _stream_into(
+    prompt: str, out_msg: cl.Message, system_prompt: str = ""
+) -> tuple[str, bool]:
     """
     Stream LLM response token-by-token into out_msg using an O(n) think-block filter.
     Falls back to a blocking call if the provider does not support streaming.
+
+    system_prompt: injected before the prompt (agent persona). Falls back to the
+    TARA default inside call_llm() when empty.
 
     Returns (response_text, was_streamed).
     - was_streamed=True  → content already rendered via stream_token events;
@@ -285,18 +331,22 @@ async def _stream_into(prompt: str, out_msg: cl.Message) -> tuple[str, bool]:
     - was_streamed=False → content set on out_msg.content; caller must call update().
     """
     from llama_index.core import Settings as LISettings
+    from tibco_agent.agent.core import _SYSTEM_PROMPT, _clean_response as _cr
 
     loop = asyncio.get_event_loop()
     session_cfg = cl.user_session.get("session_cfg")
     await loop.run_in_executor(None, lambda: configure_llm(session_cfg))
     lm = LISettings.llm
 
+    sp = system_prompt.strip() or _SYSTEM_PROMPT
+    full_prompt = f"{sp}\n\n{prompt}"
+
     accumulated = ""
     t0 = time.perf_counter()
     first_token_t: float | None = None
 
     try:
-        raw = lm.astream_complete(prompt)
+        raw = lm.astream_complete(full_prompt)
         if asyncio.iscoroutine(raw):
             raw = await raw
 
@@ -324,7 +374,7 @@ async def _stream_into(prompt: str, out_msg: cl.Message) -> tuple[str, bool]:
         return final_cleaned, True
 
     except Exception:
-        result = await loop.run_in_executor(None, lambda: str(lm.complete(prompt)))
+        result = await loop.run_in_executor(None, lambda: str(lm.complete(full_prompt)))
         cleaned = _clean_response(result)
         out_msg.content = cleaned
         return cleaned, False
@@ -337,7 +387,8 @@ async def on_thumbs_up(action: cl.Action) -> None:
     q = cl.user_session.get("last_question", "")
     r = cl.user_session.get("last_response", "")
     idx = len(cl.user_session.get("chat_history", [])) // 2
-    _feedback.record(idx, "up", q, r)
+    ac = cl.user_session.get("agent_config")
+    _feedback.record(idx, "up", q, r, agent_id=ac.id if ac else "")
     await action.remove()
 
 
@@ -346,7 +397,8 @@ async def on_thumbs_down(action: cl.Action) -> None:
     q = cl.user_session.get("last_question", "")
     r = cl.user_session.get("last_response", "")
     idx = len(cl.user_session.get("chat_history", [])) // 2
-    _feedback.record(idx, "down", q, r)
+    ac = cl.user_session.get("agent_config")
+    _feedback.record(idx, "down", q, r, agent_id=ac.id if ac else "")
     await action.remove()
 
 
@@ -705,6 +757,11 @@ async def on_message(message: cl.Message) -> None:
             except Exception:
                 pass
 
+        agent_config = cl.user_session.get("agent_config")
+        _collection = agent_config.collection_name if agent_config else ""
+        _agent_name = agent_config.name if agent_config else ""
+        _system_prompt = agent_config.system_prompt if agent_config else ""
+
         prompt = await loop.run_in_executor(
             None,
             lambda: build_prompt(
@@ -714,6 +771,8 @@ async def on_message(message: cl.Message) -> None:
                 bw_content,
                 on_step=_on_step,
                 chat_history=chat_history or None,
+                collection_name=_collection,
+                agent_name=_agent_name,
             ),
         )
 
@@ -726,7 +785,7 @@ async def on_message(message: cl.Message) -> None:
         out_msg.actions = _make_actions()
         await out_msg.update()
 
-        response, was_streamed = await _stream_into(prompt, out_msg)
+        response, was_streamed = await _stream_into(prompt, out_msg, system_prompt=_system_prompt)
 
         if not was_streamed:
             # Fallback (blocking) path: content was set directly on out_msg.content;

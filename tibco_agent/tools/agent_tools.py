@@ -165,17 +165,21 @@ def _get_embed_model():
     return _embed_model
 
 
-@functools.lru_cache(maxsize=256)
-def search_knowledge(query: str) -> str:
+@functools.lru_cache(maxsize=512)
+def search_knowledge(query: str, collection_name: str = "") -> str:
     """
-    Query the TIBCO knowledge base using hybrid BM25 + vector search.
-    Returns formatted excerpts with source citations, or empty string on failure.
-    Results are LRU-cached — call invalidate_search_cache() on Weaviate config change.
+    Query a knowledge base using hybrid BM25 + vector search.
+
+    collection_name: target Weaviate collection; falls back to settings.collection_name
+    when empty so existing single-agent callers need no changes.
+
+    Results are LRU-cached per (query, collection_name) pair — call
+    invalidate_search_cache() after changing Weaviate config or collection contents.
     """
     t0 = time.perf_counter()
     try:
         client = _get_weaviate_client()
-        class_name = settings.collection_name
+        class_name = collection_name or settings.collection_name
         if not client.collections.exists(class_name):
             return ""
         embed_model = _get_embed_model()
@@ -186,8 +190,8 @@ def search_knowledge(query: str) -> str:
             return ""
         if _RERANKER_ENABLED:
             objects = _rerank(query, objects)
-        log.info("search_knowledge: %d results in %.2fs (reranked=%s product=%s)",
-                 len(objects), time.perf_counter() - t0, _RERANKER_ENABLED, product)
+        log.info("search_knowledge: %d results in %.2fs (reranked=%s product=%s col=%s)",
+                 len(objects), time.perf_counter() - t0, _RERANKER_ENABLED, product, class_name)
         return _format_excerpts(objects)
     except Exception as exc:
         log.warning("search_knowledge failed (returning empty): %s", exc)

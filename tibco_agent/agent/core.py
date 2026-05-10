@@ -209,30 +209,37 @@ def build_prompt(
     bw_content: str = "",
     on_step: Callable[[str, int], None] | None = None,
     chat_history: list[dict] | None = None,
+    collection_name: str = "",
+    agent_name: str = "",
 ) -> str:
-    """Assemble the full LLM prompt.  on_step(message, pct) is called at each stage."""
+    """Assemble the full LLM prompt.  on_step(message, pct) is called at each stage.
+
+    collection_name: Weaviate collection to search (empty → global default).
+    agent_name: used to personalise the assistant label in injected history.
+    """
     _step = on_step or (lambda _msg, _pct: None)
     t0 = time.perf_counter()
-    log.debug("build_prompt: question=%r flogo=%d bw=%d log=%d history=%d",
+    log.debug("build_prompt: question=%r flogo=%d bw=%d log=%d history=%d col=%r",
               question[:60], len(flogo_content), len(bw_content), len(log_content),
-              len(chat_history or []))
+              len(chat_history or []), collection_name)
     parts = [question]
 
     # Inject the most-recent turns (char-budget trimmed) for follow-up context
     if chat_history:
         recent = _trim_history(chat_history)
+        assistant_label = agent_name or "TARA"
         history_lines = [
             "\n\n## Conversation History",
             "_Prior turns — use for follow-up context only, do not re-answer unless asked._",
         ]
         for msg in recent:
-            role = "User" if msg["role"] == "user" else "TARA"
+            role = "User" if msg["role"] == "user" else assistant_label
             text = msg["content"][:400].replace("\n", " ").strip()
             history_lines.append(f"**{role}:** {text}")
         parts.append("\n".join(history_lines))
 
     _step("Searching knowledge base…", 15)
-    kb = search_knowledge(question)
+    kb = search_knowledge(question, collection_name)
     if kb:
         parts.append(
             "\n\n## Knowledge Base Excerpts\n"
@@ -316,11 +323,17 @@ def build_prompt(
     return result
 
 
-def call_llm(prompt: str) -> str:
-    """Send a pre-built prompt to the configured LLM and return the cleaned response."""
-    log.debug("call_llm: prompt_len=%d", len(prompt))
+def call_llm(prompt: str, system_prompt: str = "") -> str:
+    """Send a pre-built prompt to the configured LLM and return the cleaned response.
+
+    system_prompt: agent-specific persona injected before the user prompt.
+    Falls back to _SYSTEM_PROMPT when empty (preserves TARA's default behaviour).
+    """
+    sp = system_prompt.strip() or _SYSTEM_PROMPT
+    full_prompt = f"{sp}\n\n{prompt}"
+    log.debug("call_llm: prompt_len=%d system_prompt_len=%d", len(prompt), len(sp))
     t0 = time.perf_counter()
-    result = _clean_response(str(Settings.llm.complete(prompt)))
+    result = _clean_response(str(Settings.llm.complete(full_prompt)))
     log.info("call_llm: response_len=%d elapsed=%.1fs", len(result), time.perf_counter() - t0)
     return result
 
@@ -331,6 +344,14 @@ def ask(
     log_content: str = "",
     bw_content: str = "",
     chat_history: list[dict] | None = None,
+    system_prompt: str = "",
+    collection_name: str = "",
+    agent_name: str = "",
 ) -> str:
-    prompt = build_prompt(question, flogo_content, log_content, bw_content, chat_history=chat_history)
-    return call_llm(prompt)
+    prompt = build_prompt(
+        question, flogo_content, log_content, bw_content,
+        chat_history=chat_history,
+        collection_name=collection_name,
+        agent_name=agent_name,
+    )
+    return call_llm(prompt, system_prompt=system_prompt)

@@ -65,8 +65,8 @@ def _section_for_offset(sections: list[tuple[int, str]], offset: int) -> str:
     return sections[idx][1] if idx >= 0 else ""
 
 
-def _open_client() -> weaviate.WeaviateClient:
-    url = settings.weaviate_url
+def _open_client(weaviate_url: str | None = None) -> weaviate.WeaviateClient:
+    url = weaviate_url or settings.weaviate_url
     # Strip scheme for connect_to_custom (it takes host + port separately)
     bare = url.removeprefix("https://").removeprefix("http://")
     host, _, port_str = bare.partition(":")
@@ -93,10 +93,19 @@ class IngestionPipeline:
         chunks = pipeline.run()
     """
 
-    def __init__(self, chunk_size: int = 300, chunk_overlap: int = 50) -> None:
+    def __init__(
+        self,
+        chunk_size: int = 300,
+        chunk_overlap: int = 50,
+        collection_name: str = "",
+        weaviate_url: str = "",
+    ) -> None:
         self._sources: list[KnowledgeSource] = []
         self._chunk_size = chunk_size
         self._chunk_overlap = chunk_overlap
+        # Per-pipeline overrides — fall back to global settings when empty
+        self._collection_name = collection_name
+        self._weaviate_url = weaviate_url
 
     def add_source(self, source: KnowledgeSource) -> "IngestionPipeline":
         self._sources.append(source)
@@ -140,8 +149,8 @@ class IngestionPipeline:
             node.metadata["section"] = _section_for_offset(sections, offset)
         log.info("Total: %d chunks from %d document(s)", len(nodes), len(raw_docs))
 
-        client = _open_client()
-        class_name = settings.collection_name
+        client = _open_client(self._weaviate_url or None)
+        class_name = self._collection_name or settings.collection_name
 
         # ── Schema management (Weaviate v4) ────────────────────────────────────
         with client:
