@@ -243,6 +243,15 @@ async def on_settings_update(new_settings: dict) -> None:
             request_timeout=float(new_settings.get("timeout", base.request_timeout)),
         )
         cl.user_session.set("session_cfg", session_cfg)
+
+        # Invalidate KB cache if Weaviate URL or collection changed — old results
+        # would come from the previous collection and silently mislead answers.
+        if (session_cfg.weaviate_url != base.weaviate_url
+                or session_cfg.collection_name != base.collection_name):
+            from tibco_agent.tools.agent_tools import invalidate_search_cache
+            invalidate_search_cache()
+            log.info("Search cache invalidated: Weaviate config changed")
+
         loop = asyncio.get_event_loop()
         agent, degraded = await loop.run_in_executor(None, lambda: _build_agent_safe(cfg=session_cfg))
         cl.user_session.set("agent", agent)

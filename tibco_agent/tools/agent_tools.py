@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 import os
+import threading
 import weaviate
 from weaviate.classes.query import Filter, HybridFusion
 from llama_index.core.tools import FunctionTool
@@ -23,6 +24,7 @@ from tibco_agent.analyzers.bw_analyzer import BWAnalyzer
 
 # Module-level singletons — live for the process lifetime.
 _weaviate_client: weaviate.WeaviateClient | None = None
+_weaviate_lock = threading.Lock()  # guards reconnect across concurrent sessions
 _embed_model: OllamaEmbedding | None = None
 _cross_encoder = None  # lazy-loaded on first use
 
@@ -139,16 +141,17 @@ def _connect_weaviate() -> weaviate.WeaviateClient:
 
 def _get_weaviate_client() -> weaviate.WeaviateClient:
     global _weaviate_client
-    # Reconnect if the singleton is stale (Weaviate restart, network blip, etc.)
-    if _weaviate_client is not None and not _weaviate_client.is_connected():
-        try:
-            _weaviate_client.close()
-        except Exception:
-            pass
-        _weaviate_client = None
-    if _weaviate_client is None:
-        _weaviate_client = _connect_weaviate()
-    return _weaviate_client
+    with _weaviate_lock:
+        # Reconnect if the singleton is stale (Weaviate restart, network blip, etc.)
+        if _weaviate_client is not None and not _weaviate_client.is_connected():
+            try:
+                _weaviate_client.close()
+            except Exception:
+                pass
+            _weaviate_client = None
+        if _weaviate_client is None:
+            _weaviate_client = _connect_weaviate()
+        return _weaviate_client
 
 
 def _get_embed_model() -> OllamaEmbedding:
@@ -253,7 +256,7 @@ def build_bw_tool(analyzer: BWAnalyzer | None = None) -> FunctionTool:
     def analyze_bw_process(xml_content: str) -> str:
         """Analyze a TIBCO BW6 process file (.bwp XML content as string) and return findings."""
         report = _analyzer.analyze(xml_content)
-        return _analyzer._report_to_markdown(report)
+        return _analyzer.report_to_markdown(report)
 
     return FunctionTool.from_defaults(
         fn=analyze_bw_process,
