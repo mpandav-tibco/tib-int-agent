@@ -183,7 +183,7 @@ async def on_chat_start() -> None:
             "## Hi, I'm TARA — your TIBCO AI Review Agent 👋\n\n"
             "I'm an expert assistant for **TIBCO BusinessWorks**, **Flogo Enterprise**, "
             "**EMS**, and **Messaging** (FTL, eFTL, Pulsar).\n\n"
-            "**Here's what I can do:**\n\n"
+            "**What I can do:**\n\n"
             "| Capability | How to use |\n"
             "|---|---|\n"
             "| Answer TIBCO questions | Just type your question |\n"
@@ -191,8 +191,14 @@ async def on_chat_start() -> None:
             "| Review a BW process | Upload a `.bwp` or `.xml` file |\n"
             "| Diagnose pod / app logs | Upload a `.log` or `.txt` file |\n"
             "| Analyse a full project | Upload a `.zip` archive |\n\n"
-            "_Use the suggestion chips below to jump into a guided workflow, "
-            "or open ⚙ Settings to switch LLM provider / model._"
+            "**Quick start — click a prompt to begin:**\n\n"
+            "- 🔍 *Review the uploaded .flogo file for issues, security gaps, and production readiness.*\n"
+            "- 🔍 *Review the uploaded .bwp BusinessWorks process for fault handling and best practices.*\n"
+            "- 🩺 *Diagnose the errors in the uploaded pod log. Give root cause and remediation steps.*\n"
+            "- 🚀 *Run me through a pre-deployment checklist for a TIBCO application going to production.*\n"
+            "- 🔧 *Help me troubleshoot a Kubernetes pod that won't start.*\n"
+            "- 📡 *Help me diagnose a TIBCO EMS or messaging connection issue.*\n\n"
+            "_Open ⚙ Settings to switch LLM provider or model._"
         ),
     ).send()
 

@@ -1,0 +1,45 @@
+/*
+ * TARA — TIBCO blue brand overrides for Chainlit 2.x
+ * Replaces the default Chainlit pink/magenta accent with TIBCO #0057a8
+ */
+
+/* ── CSS custom properties (light + dark) ─────────────────────────── */
+:root,
+[data-theme="light"] {
+  --primary:         #0057a8 !important;
+  --primary-dark:    #003865 !important;
+  --primary-light:   #4a90d9 !important;
+  --background:      #eef3f9;
+  --surface:         #ffffff;
+}
+
+[data-theme="dark"] {
+  --primary:         #4a90d9 !important;
+  --primary-dark:    #0057a8 !important;
+  --primary-light:   #90c4f0 !important;
+  --background:      #0d1117;
+  --surface:         #161b22;
+}
+
+/* ── Send button ──────────────────────────────────────────────────── */
+button[data-testid="send-button"],
+button[aria-label="Send message"],
+.send-button {
+  background-color: #0057a8 !important;
+}
+
+/* ── Step / tool-call accent ─────────────────────────────────────── */
+.step-icon, .cl-step-icon {
+  color: #0057a8 !important;
+}
+
+/* ── Starter chip borders ─────────────────────────────────────────── */
+.starter-button, [class*="Starter"] {
+  border-color: #0057a8 !important;
+  color: #0057a8 !important;
+}
+[data-theme="dark"] .starter-button,
+[data-theme="dark"] [class*="Starter"] {
+  border-color: #4a90d9 !important;
+  color: #4a90d9 !important;
+}
