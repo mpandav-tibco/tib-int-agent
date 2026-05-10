@@ -361,6 +361,12 @@ async def on_export_chat(action: cl.Action) -> None:
     ).send()
 
 
+async def _set_msg(m: cl.Message, text: str) -> None:
+    """Update a message's content in-place (used for progress updates from threads)."""
+    m.content = text
+    await m.update()
+
+
 def _make_actions() -> list:
     """Return fresh Action objects for each message (Chainlit binds them per-message)."""
     return [
@@ -638,23 +644,36 @@ async def on_message(message: cl.Message) -> None:
     response = ""
 
     try:
-        # ── Build prompt (KB search + analysis context) ───────────────────────
-        async with cl.Step(name="Knowledge Base Search", type="retrieval") as step:
-            prompt = await loop.run_in_executor(
-                None,
-                lambda: build_prompt(
-                    question,
-                    flogo_content,
-                    log_content,
-                    bw_content,
-                    chat_history=chat_history or None,
-                ),
-            )
-            step.output = "Context assembled"
-
-        # ── Stream response ───────────────────────────────────────────────────
-        out_msg = cl.Message(content="", author="TARA")
+        # ── Show live progress while build_prompt runs in a thread ────────────
+        # out_msg is created immediately so the user sees something right away.
+        # The on_step callback updates its content from the thread via the event loop.
+        out_msg = cl.Message(content="_Searching knowledge base…_", author="TARA")
         await out_msg.send()
+
+        def _on_step(msg: str, _pct: int) -> None:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    _set_msg(out_msg, f"_{msg}_"),
+                    loop,
+                )
+            except Exception:
+                pass
+
+        prompt = await loop.run_in_executor(
+            None,
+            lambda: build_prompt(
+                question,
+                flogo_content,
+                log_content,
+                bw_content,
+                on_step=_on_step,
+                chat_history=chat_history or None,
+            ),
+        )
+
+        # ── Clear the progress text and stream the actual response ────────────
+        out_msg.content = ""
+        await out_msg.update()
         response = await _stream_into(prompt, out_msg)
 
         # Single final update: set content + actions together to avoid double-render.
@@ -663,15 +682,16 @@ async def on_message(message: cl.Message) -> None:
         await out_msg.update()
 
     except Exception as exc:
-        if _cfg.llm_provider == "ollama":
+        session_cfg = cl.user_session.get("session_cfg") or _cfg
+        if session_cfg.llm_provider == "ollama":
             hint = (
                 "Check Ollama is running: `ollama serve`\n"
-                f"Check model is pulled: `ollama pull {_cfg.llm_model}`\n"
+                f"Check model is pulled: `ollama pull {session_cfg.llm_model}`\n"
                 "Check Weaviate is running: `docker-compose up -d`"
             )
         else:
             hint = (
-                f"Provider: **{_cfg.llm_provider}** · Model: `{_cfg.llm_model}`\n\n"
+                f"Provider: **{session_cfg.llm_provider}** · Model: `{session_cfg.llm_model}`\n\n"
                 "- Verify your **API Key** is correct in Settings\n"
                 "- Confirm the model name is available for your provider\n"
                 "- Check Weaviate is running: `docker-compose up -d`"
