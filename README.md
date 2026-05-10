@@ -1,105 +1,224 @@
-# TARA — TIBCO AI Review Agent
+# AgentForge
 
-A chat-based AI assistant for TIBCO integration engineers. TARA answers best-practice questions, reviews `.flogo` and `.bwp`/`.bwp6` application files, diagnoses Kubernetes pod logs, and retrieves answers from your ingested TIBCO documentation — all in a modern streaming chat UI powered by [Chainlit](https://docs.chainlit.io).
+A "Shopify for AI agents" — a visual builder where you create named agents, write their system prompts, upload knowledge documents or URL sources, then immediately test them in an embedded chat panel.
+
+TARA (TIBCO AI Review Agent) is the built-in first-party agent; you can build as many additional agents as you like alongside it.
+
+## What you can do
+
+- **Create agents** — name, title, system prompt, LLM provider/model, API key
+- **Upload knowledge** — drag-and-drop PDFs, Markdown, text; or add URLs to crawl
+- **Build knowledge base** — one-click ingestion into an isolated Weaviate collection per agent
+- **Test in-place** — embedded Chainlit chat panel, no tab-switching needed
+- **Open in new tab** — share a direct chat link for any agent
+- **Start from a template** — 6 built-in starting points (Customer Support, HR, DevOps, Code Review, Sales, Docs)
+- **View feedback** — per-agent thumbs-up/down counts and rated exchange history
+
+---
 
 ## Architecture
 
 ```
-User (Chainlit chat — port 8000)
-      │
-      ├── File upload (.flogo · .bwp · .log · .zip)
-      │         │
-      │         └── Static analyzers (no LLM)
-      │               ├── FlogoAnalyzer  (12 rules, FLOGO-001…012)
-      │               ├── BWAnalyzer     (BW5/6/BWCE XML)
-      │               ├── LogAnalyzer    (K8s / on-prem logs)
-      │               └── analyze_zip    (multi-file projects)
-      │
-      ├── Knowledge retrieval
-      │         └── Weaviate (hybrid BM25+vector, nomic-embed-text)
-      │
-      └── LLM (streaming)
-                ├── Ollama (local) — deepseek-r1 · llama3 · mistral
-                ├── OpenAI          — gpt-4o · gpt-4o-mini
-                ├── Anthropic       — claude-opus-4 · claude-sonnet-4
-                └── Groq / custom OpenAI-compatible
+Port 8000 — FastAPI (main.py)
+  ├── /api/agents/*     CRUD, file upload, ingest, feedback
+  └── /*                React SPA (forge/dist/) — AgentForge builder UI
+
+Port 8080 — Chainlit (chainlit_app.py)
+  └── ?agent_id=<id>    Loads agent config from SQLite, uses per-agent
+                        system prompt + Weaviate collection
+
+SQLite (data/agents.db)
+  ├── agents table      Agent config, status, LLM settings
+  └── agent_urls table  URL knowledge sources per agent
+
+Weaviate (port 8080 in Docker / localhost:8080 local)
+  └── Agent_<id> collection per agent  (isolated KB)
 ```
 
-**Key design choices:**
-
-- Retrieval-only RAG — no second LLM call inside the tool, halving inference latency
-- Rule engine with `Rule` ABC — add new checks without touching the agent core
-- `ToolRegistry` singleton — register new tools without modifying `build_agent()`
-- Streaming responses with real-time token display and `<think>` block filtering (deepseek-r1)
-- Intent classification — full review vs. specific question → different LLM prompt depth
+---
 
 ## Prerequisites
 
-| Tool | Version | Purpose |
-|------|---------|---------|
-| Python | 3.11+ | Runtime |
-| [Ollama](https://ollama.ai) | latest | Local LLM inference (optional if using cloud provider) |
-| Weaviate | 1.24+ | Vector store (or use Docker Compose) |
+| Tool | Version | Notes |
+|------|---------|-------|
+| Python | 3.11+ | |
+| Node.js | 18+ | For building/running the React UI |
+| [Ollama](https://ollama.ai) | latest | Skip if using a cloud LLM |
+| Weaviate | 1.24+ | Via Docker Compose or local install |
 
-**Default Ollama models:**
+**Pull models for local use (Ollama):**
 ```bash
-ollama pull deepseek-r1:latest   # LLM (~4.9 GB) — best for analysis
-ollama pull nomic-embed-text     # Embeddings (~274 MB) — required for RAG
+ollama pull deepseek-r1:latest   # LLM (~4.9 GB)
+ollama pull nomic-embed-text     # Embeddings (~274 MB) — required
 ```
 
-Any Ollama-compatible model works. Cloud providers (OpenAI, Anthropic, Groq) need only an API key.
+---
 
-## Quick Start (local)
+## Quick Start — Local Development
+
+Three terminals. Run them in order.
+
+### 1. Python backend (FastAPI + Chainlit)
 
 ```bash
-# 1. Clone and create virtual environment
 git clone https://github.com/mpandav-tibco/tibco-ai-agent.git
 cd tibco-ai-agent
+
 python -m venv .venv
 .venv\Scripts\activate          # Windows
-# source .venv/bin/activate    # macOS/Linux
+# source .venv/bin/activate    # macOS / Linux
 
-# 2. Install dependencies
 pip install -r requirements.txt
-
-# 3. Add knowledge files (optional but recommended)
-# Drop .md, .txt, .pdf, or .html files into data/knowledge/
-# Use subfolders named flogo/ or bw/ for automatic product tagging
-
-# 4. Ingest knowledge into Weaviate
-python ingest.py
-
-# 5. Launch TARA
-chainlit run chainlit_app.py
-# → opens at http://localhost:8000
 ```
 
-## Docker Compose (recommended for production)
+**Terminal A — API server (port 8000):**
+```bash
+uvicorn main:app --reload --port 8000
+```
 
-Starts Weaviate + TARA in one command. Ollama runs on the host and is accessed via `host.docker.internal`.
+**Terminal B — Chainlit chat UI (port 8080):**
+```bash
+chainlit run chainlit_app.py --port 8080
+```
+
+### 2. React builder UI
+
+**Terminal C — Vite dev server (port 5173):**
+```bash
+cd forge
+npm install
+npm run dev
+```
+
+Open **http://localhost:5173** — you should see the AgentForge gallery.
+
+### Using the Makefile
 
 ```bash
-# Pull Ollama models on the host first
+make install       # pip install -r requirements.txt
+make forge-install # cd forge && npm install
+make dev           # starts FastAPI + Chainlit together
+make forge-dev     # starts Vite dev server
+```
+
+---
+
+## Quick Start — Docker Compose (recommended for testing on another machine)
+
+Builds and starts Weaviate + API + Chainlit in one command. Ollama runs on the host.
+
+```bash
+# 1. Pull Ollama models on the host first
 ollama pull deepseek-r1:latest
 ollama pull nomic-embed-text
 
-# Start all services
-docker-compose up --build
+# 2. Build React SPA
+cd forge && npm install && npm run build && cd ..
 
-# → TARA at http://localhost:8000
-# → Weaviate at http://localhost:8080
+# 3. Start everything
+docker compose up --build
 ```
 
-To use a cloud LLM instead of Ollama:
+| URL | Service |
+|-----|---------|
+| http://localhost:8000 | AgentForge builder UI + API |
+| http://localhost:8080 | Chainlit chat (used by iframe + direct link) |
+
+Or with make:
 ```bash
-LLM_PROVIDER=anthropic LLM_MODEL=claude-sonnet-4-6 LLM_API_KEY=sk-ant-... docker-compose up --build
+make docker-up    # builds React SPA then docker compose up --build
+make docker-down  # docker compose down
 ```
 
-## LLM Providers
+### Cloud LLM instead of Ollama
 
-Set `LLM_PROVIDER` (and accompanying vars) in your environment or `.env` file:
+```bash
+# Anthropic
+LLM_PROVIDER=anthropic LLM_MODEL=claude-sonnet-4-6 LLM_API_KEY=sk-ant-... docker compose up --build
 
-| `LLM_PROVIDER` | `LLM_MODEL` example | Extra vars |
+# OpenAI
+LLM_PROVIDER=openai LLM_MODEL=gpt-4o LLM_API_KEY=sk-... docker compose up --build
+
+# Groq
+LLM_PROVIDER=groq LLM_MODEL=llama-3.3-70b-versatile LLM_API_KEY=gsk_... docker compose up --build
+```
+
+---
+
+## Environment Variables
+
+### Backend (FastAPI / Chainlit)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEAVIATE_URL` | `http://localhost:8080` | Weaviate instance URL |
+| `CHAINLIT_URL` | `http://localhost:8080` | Chainlit base URL (used to build agent chat links) |
+| `LLM_PROVIDER` | `ollama` | `ollama` · `openai` · `anthropic` · `groq` · `ollama-cloud` · `custom` |
+| `LLM_MODEL` | `deepseek-r1:latest` | Model name for the selected provider |
+| `LLM_API_KEY` | _(empty)_ | API key for cloud providers |
+| `LLM_API_BASE` | _(empty)_ | Base URL for custom / ollama-cloud providers |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
+| `EMBED_MODEL` | `nomic-embed-text` | Embedding model (always via Ollama) |
+| `COLLECTION_NAME` | `TibcoKnowledge` | Default Weaviate collection (TARA / legacy) |
+| `REQUEST_TIMEOUT` | `180` | LLM request timeout in seconds |
+| `FORGE_API_KEY` | _(empty)_ | Set to enable API key auth on all `/api/*` routes |
+| `AGENTS_DB_PATH` | `data/agents.db` | SQLite database path |
+| `AGENT_FILES_ROOT` | `data/agent_files/` | Uploaded knowledge files root |
+
+### Chainlit auth (optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHAINLIT_AUTH_SECRET` | _(empty)_ | Set to enable Chainlit login |
+| `TARA_USERNAME` | `tara` | Chainlit login username |
+| `TARA_PASSWORD` | `tara` | Chainlit login password |
+
+### React builder UI
+
+| Variable | Description |
+|----------|-------------|
+| `VITE_REQUIRE_AUTH=true` | Force login screen when no API key is stored (set in `forge/.env`) |
+
+---
+
+## AgentForge API key auth (optional)
+
+To lock down the builder UI, set `FORGE_API_KEY` on the server:
+
+```bash
+export FORGE_API_KEY="my-secret-key"
+uvicorn main:app --port 8000
+```
+
+To force the React login screen on clients that have no key stored:
+```bash
+# forge/.env
+VITE_REQUIRE_AUTH=true
+```
+
+Leave `FORGE_API_KEY` unset for open dev mode (no login required).
+
+---
+
+## Building Agents — Step by Step
+
+1. Open **http://localhost:5173** (dev) or **http://localhost:8000** (prod)
+2. Click **New Agent** or pick a **Template**
+3. Fill in Name, system prompt, and choose an LLM provider/model
+4. Click **Save**
+5. In the **Knowledge Base** tab:
+   - Drag-and-drop files (PDF, Markdown, text)
+   - Add URL sources to crawl
+   - Click **Build Knowledge Base**
+6. Wait for the status indicator to turn green (ready)
+7. Switch to **Test Chat** — an embedded Chainlit panel loads your agent
+8. Click **Open in new tab** to share the chat link
+
+---
+
+## LLM Provider Reference
+
+| `LLM_PROVIDER` | Example model | Required extra vars |
 |---|---|---|
 | `ollama` (default) | `deepseek-r1:latest` | `OLLAMA_BASE_URL` |
 | `openai` | `gpt-4o` | `LLM_API_KEY` |
@@ -108,166 +227,105 @@ Set `LLM_PROVIDER` (and accompanying vars) in your environment or `.env` file:
 | `ollama-cloud` | `llama3.3:70b-instruct-cloud` | `LLM_API_KEY`, `LLM_API_BASE` |
 | `custom` | any OpenAI-compatible model | `LLM_API_KEY`, `LLM_API_BASE` |
 
-You can also switch provider live from the chat settings panel (gear icon ⚙).
+Per-agent LLM settings (set in the editor) override the server defaults.
 
-## Knowledge Base
+---
 
-Place documents in `data/knowledge/`. Supported formats: `.md` `.txt` `.pdf` `.html`
+## TARA — Built-in TIBCO Agent
 
-```
-data/knowledge/
-├── flogo/          # auto-tagged as product=flogo
-│   ├── best_practices.md
-│   └── release_notes.pdf
-├── bw/             # auto-tagged as product=bw
-│   └── kubernetes_deployment.md
-└── errors/         # tagged as product=general
-    └── common_errors.md
-```
+TARA is the original built-in agent for TIBCO integration engineers. It reviews `.flogo`, `.bwp`, `.log`, and `.zip` files and answers questions from your TIBCO knowledge base.
 
-Re-ingest after adding files:
+**To use TARA standalone (without the builder UI):**
 ```bash
-python ingest.py              # reset and rebuild (default)
-python ingest.py --no-reset   # append to existing collection
-python ingest.py --web        # also fetch TIBCO web docs
+chainlit run chainlit_app.py   # → http://localhost:8000
 ```
 
-## Supported File Types for Review
-
-Upload files directly in the chat input bar:
-
-| Extension | Analyzer | Notes |
-|-----------|----------|-------|
-| `.flogo` | FlogoAnalyzer | 12 static rules (security, resilience, observability) |
-| `.bwp`, `.bwp6`, `.process` | BWAnalyzer | BW5/6/BWCE process definitions |
-| `.log`, `.txt` | LogAnalyzer | K8s pod logs, on-prem logs |
-| `.zip` | analyze_zip | Multi-file project (Flogo + BW mixed) |
-
-## Flogo Rules
+**Flogo static rules:**
 
 | Rule ID | Severity | Description |
 |---------|----------|-------------|
 | FLOGO-001 | Error | Sensitive data logged (auth tokens, passwords) |
-| FLOGO-002 | Error | SSL verification disabled on REST activity |
+| FLOGO-002 | Error | SSL verification disabled |
 | FLOGO-003 | Warning | No error handler on flow |
 | FLOGO-004 | Warning | SELECT * in JDBC query |
-| FLOGO-005 | Error | Hardcoded credentials in activity input |
+| FLOGO-005 | Error | Hardcoded credentials |
 | FLOGO-006 | Warning | Flow has no links (unreachable activities) |
 | FLOGO-007 | Info | No triggers defined |
 | FLOGO-008 | Warning | Timeout not set on REST activity |
-| FLOGO-009 | Warning | Very large flow (>20 tasks) — consider splitting |
-| FLOGO-010 | Info | No correlation ID propagation detected |
-| FLOGO-011 | Warning | Log activity maps entire `$flow` or `$activity` object |
+| FLOGO-009 | Warning | Very large flow (>20 tasks) |
+| FLOGO-010 | Info | No correlation ID propagation |
+| FLOGO-011 | Warning | Log activity maps entire `$flow` or `$activity` |
 | FLOGO-012 | Warning | Hardcoded URL in REST activity |
 
-## Authentication
-
-By default TARA runs without a login (suitable for local dev). To enable password auth:
-
+**Ingest TIBCO knowledge docs:**
 ```bash
-# Generate a secret (any random string)
-export CHAINLIT_AUTH_SECRET="your-random-secret-here"
-export TARA_USERNAME="admin"
-export TARA_PASSWORD="changeme"
-chainlit run chainlit_app.py
+# Drop .md, .txt, .pdf, .html files into data/knowledge/
+# Use flogo/ or bw/ subfolders for automatic product tagging
+python ingest.py              # reset and rebuild
+python ingest.py --no-reset   # append to existing collection
+python ingest.py --web        # also crawl TIBCO web docs
 ```
 
-In Docker Compose, set these in a `.env` file alongside `docker-compose.yml`.
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WEAVIATE_URL` | `http://localhost:8080` | Weaviate instance URL |
-| `COLLECTION_NAME` | `TibcoKnowledge` | Weaviate class name |
-| `LLM_PROVIDER` | `ollama` | LLM backend (`ollama`, `openai`, `anthropic`, `groq`, `ollama-cloud`, `custom`) |
-| `LLM_MODEL` | `deepseek-r1:latest` | Model name for the selected provider |
-| `LLM_API_KEY` | _(empty)_ | API key for cloud providers |
-| `LLM_API_BASE` | _(empty)_ | Base URL for custom/ollama-cloud providers |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model (always local) |
-| `KNOWLEDGE_PATH` | `./data/knowledge` | Local knowledge directory |
-| `REQUEST_TIMEOUT` | `180` | LLM request timeout in seconds |
-| `CHAINLIT_AUTH_SECRET` | _(empty)_ | Set to enable password authentication |
-| `TARA_USERNAME` | `tara` | Login username (when auth is enabled) |
-| `TARA_PASSWORD` | `tara` | Login password (when auth is enabled) |
-
-## Extending the Agent
-
-**Add a new Flogo rule:**
-```python
-from tibco_agent.analyzers.base import Finding, Rule, Severity
-from tibco_agent.analyzers.flogo_rules import FlogoContext
-
-class MyRule(Rule):
-    id = "CUSTOM-001"
-    severity = Severity.WARNING
-    category = "custom"
-
-    def check(self, ctx: FlogoContext) -> list[Finding]:
-        findings = []
-        for flow in ctx.flows:
-            if not flow.tasks:
-                findings.append(Finding(
-                    rule_id=self.id, severity=self.severity,
-                    title="Empty Flow", location=f"flow:{flow.name}",
-                    message="Flow has no tasks.",
-                    recommendation="Add at least one activity.",
-                ))
-        return findings
-
-from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
-analyzer = FlogoAnalyzer()
-analyzer.register_rule(MyRule())
-```
-
-**Add a new agent tool:**
-```python
-# tibco_agent/tools/agent_tools.py
-def build_my_tool() -> FunctionTool: ...
-
-# tibco_agent/agent/core.py — register it in build_agent()
-registry.register(build_my_tool())
-```
-
-## Running Tests
-
-```bash
-# Smoke test: analyzers + Weaviate connectivity (no LLM required)
-python test_analyzers.py
-
-# End-to-end: requires Ollama running
-python test_agent.py
-```
+---
 
 ## Project Structure
 
 ```
 tibco-ai-agent/
-├── chainlit_app.py           # Chainlit UI entry point
-├── chainlit.md               # Welcome screen content
-├── .chainlit/config.toml     # Chainlit theme and feature config
-├── ingest.py                 # Knowledge ingestion script
-├── test_analyzers.py         # Analyzer smoke tests
-├── Dockerfile                # Container image
-├── docker-compose.yml        # Weaviate + TARA stack
+├── main.py                    # FastAPI entry point — API + React SPA
+├── chainlit_app.py            # Chainlit chat UI (per-agent via ?agent_id=)
+├── ingest.py                  # TARA knowledge ingestion script
+├── Makefile
+├── Dockerfile.api             # API + React SPA container
+├── docker-compose.yml         # Weaviate + API + Chainlit stack
 ├── requirements.txt
 ├── data/
-│   └── knowledge/            # Drop documents here
+│   ├── agents.db              # SQLite — agent configs + URLs (auto-created)
+│   ├── agent_files/           # Uploaded knowledge files per agent
+│   └── knowledge/             # TARA legacy knowledge docs
+├── agent_store/
+│   ├── models.py              # Agent dataclass
+│   ├── store.py               # Thread-safe SQLite store (agents + agent_urls)
+│   └── router.py              # FastAPI router — CRUD, upload, ingest, feedback, URLs
+├── forge/                     # React builder UI (Vite + React + Tailwind)
+│   ├── src/
+│   │   ├── App.tsx
+│   │   ├── api.ts             # Typed fetch wrappers (auth-header aware)
+│   │   ├── types.ts
+│   │   ├── contexts/
+│   │   │   └── AuthContext.tsx
+│   │   ├── pages/
+│   │   │   ├── Gallery.tsx    # Agent card grid + template picker
+│   │   │   ├── Editor.tsx     # Config form + KB panel + chat iframe + feedback
+│   │   │   └── Login.tsx      # API key login screen
+│   │   └── components/
+│   │       ├── AgentCard.tsx
+│   │       ├── FileUpload.tsx
+│   │       ├── IngestStatus.tsx
+│   │       └── TemplateModal.tsx
+│   └── package.json
 └── tibco_agent/
-    ├── agent/
-    │   └── core.py           # LLM setup, prompt assembly, streaming
-    ├── analyzers/
-    │   ├── base.py           # Rule, Finding, AnalysisReport ABCs
-    │   ├── flogo_rules.py    # FLOGO-001…012 rule implementations
-    │   ├── flogo_analyzer.py
-    │   ├── bw_analyzer.py
-    │   ├── log_analyzer.py
-    │   └── multi_analyzer.py # ZIP project analysis
-    ├── tools/
-    │   ├── registry.py       # ToolRegistry singleton
-    │   └── agent_tools.py    # LlamaIndex FunctionTool wrappers
-    ├── knowledge/
-    │   └── weaviate_store.py # Hybrid RAG search
-    └── config.py             # Settings (pydantic-settings)
+    ├── agent/core.py          # LLM setup, prompt assembly, streaming
+    ├── analyzers/             # Flogo, BW, Log, ZIP static analyzers
+    ├── ingest/
+    │   ├── pipeline.py        # IngestionPipeline (per-collection)
+    │   └── sources/
+    │       ├── file_source.py
+    │       └── web_source.py  # URL crawling (used by agent URL sources)
+    ├── streaming.py           # ThinkFilter — strips <think> blocks (deepseek-r1)
+    ├── tools/agent_tools.py   # Weaviate search (per-collection LRU cache)
+    ├── feedback.py            # Thumbs-up/down rating store (SQLite)
+    └── config.py              # Settings (pydantic-settings)
+```
+
+---
+
+## Running Tests
+
+```bash
+# Analyzers + critical path (no external services required)
+pytest tests/ test_analyzers.py -v -k "not weaviate and not rag"
+
+# Or via make
+make test
 ```
