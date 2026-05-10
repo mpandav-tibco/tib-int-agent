@@ -169,6 +169,25 @@ async def on_chat_start() -> None:
     cl.user_session.set("last_question", "")
     cl.user_session.set("last_response", "")
 
+    await cl.Message(
+        author="TARA",
+        content=(
+            "## Hi, I'm TARA — your TIBCO AI Review Agent 👋\n\n"
+            "I'm an expert assistant for **TIBCO BusinessWorks**, **Flogo Enterprise**, "
+            "**EMS**, and **Messaging** (FTL, eFTL, Pulsar).\n\n"
+            "**Here's what I can do:**\n\n"
+            "| Capability | How to use |\n"
+            "|---|---|\n"
+            "| Answer TIBCO questions | Just type your question |\n"
+            "| Review a Flogo app (12 rules) | Upload a `.flogo` file |\n"
+            "| Review a BW process | Upload a `.bwp` or `.xml` file |\n"
+            "| Diagnose pod / app logs | Upload a `.log` or `.txt` file |\n"
+            "| Analyse a full project | Upload a `.zip` archive |\n\n"
+            "_Use the suggestion chips below to jump into a guided workflow, "
+            "or open ⚙ Settings to switch LLM provider / model._"
+        ),
+    ).send()
+
 
 # ── Settings update ───────────────────────────────────────────────────────────
 
