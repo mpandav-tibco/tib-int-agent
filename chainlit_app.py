@@ -205,9 +205,25 @@ async def on_chat_start() -> None:
 
     cl.user_session.set("agent_config", agent_config)
 
+    # If an agent specifies its own LLM, build a session-scoped config override now
+    # so every call to _stream_into() (which calls configure_llm(session_cfg)) uses it.
     loop = asyncio.get_event_loop()
-    degraded = not await loop.run_in_executor(None, _init_llm_safe)
-    cl.user_session.set("session_cfg", None)  # populated by on_settings_update
+    if agent_config and agent_config.llm_provider:
+        import dataclasses as _dc
+        agent_cfg = _dc.replace(
+            _cfg,
+            llm_provider=agent_config.llm_provider,
+            llm_model=agent_config.llm_model or _cfg.llm_model,
+            llm_api_key=agent_config.llm_api_key or _cfg.llm_api_key,
+            llm_api_base=agent_config.llm_api_base or _cfg.llm_api_base,
+            embed_model=agent_config.embed_model or _cfg.embed_model,
+            collection_name=agent_config.collection_name,
+        )
+        degraded = not await loop.run_in_executor(None, lambda: _init_llm_safe(agent_cfg))
+        cl.user_session.set("session_cfg", agent_cfg)
+    else:
+        degraded = not await loop.run_in_executor(None, _init_llm_safe)
+        cl.user_session.set("session_cfg", None)  # populated by on_settings_update
     cl.user_session.set("flogo_content", "")
     cl.user_session.set("bw_content", "")
     cl.user_session.set("log_content", "")

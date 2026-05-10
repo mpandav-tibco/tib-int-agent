@@ -21,3 +21,7 @@ Thumbs.db
 data/feedback.db
 builder/node_modules
 builder/dist
+
+# React SPA build artifacts
+forge/node_modules/
+forge/dist/

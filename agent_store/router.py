@@ -28,7 +28,7 @@ _FILES_ROOT = Path(
 _ingest_status: dict[str, dict] = {}
 
 # Default Chainlit chat URL base (override with CHAINLIT_URL env var)
-_CHAINLIT_URL = os.environ.get("CHAINLIT_URL", "http://localhost:8000")
+_CHAINLIT_URL = os.environ.get("CHAINLIT_URL", "http://localhost:8080")
 
 
 # ── Request / Response schemas ───────────────────────────────────────────────

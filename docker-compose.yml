@@ -24,33 +24,51 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── TARA Chainlit application ────────────────────────────────────────────────
-  tara:
-    build: .
+  # ── AgentForge API + React UI ────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
     ports:
       - "8000:8000"
     environment:
-      # Weaviate — always the compose service
       WEAVIATE_URL: http://weaviate:8080
-      # Ollama — runs on the host machine (not in Docker) by default
+      CHAINLIT_URL: http://chainlit:8080
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      # LLM provider selection
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       LLM_MODEL: ${LLM_MODEL:-deepseek-r1:latest}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_API_BASE: ${LLM_API_BASE:-}
-      # Embedding model (must be available in Ollama)
       EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
-      # Knowledge base collection
       COLLECTION_NAME: ${COLLECTION_NAME:-TibcoKnowledge}
-      # Timeouts
       REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-180}
-      # Auth — set CHAINLIT_AUTH_SECRET to enable login, then set TARA_USERNAME / TARA_PASSWORD
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      weaviate:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── TARA / Chainlit chat UI ──────────────────────────────────────────────────
+  chainlit:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      WEAVIATE_URL: http://weaviate:8080
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-r1:latest}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_API_BASE: ${LLM_API_BASE:-}
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+      COLLECTION_NAME: ${COLLECTION_NAME:-TibcoKnowledge}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-180}
       CHAINLIT_AUTH_SECRET: ${CHAINLIT_AUTH_SECRET:-}
       TARA_USERNAME: ${TARA_USERNAME:-tara}
       TARA_PASSWORD: ${TARA_PASSWORD:-tara}
+      AGENT_ID: ${AGENT_ID:-}
     volumes:
-      # Persist feedback DB and local knowledge files across restarts
       - ./data:/app/data
     depends_on:
       weaviate:
