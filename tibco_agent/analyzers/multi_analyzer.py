@@ -11,10 +11,13 @@ from .base import AnalysisReport
 
 @dataclass
 class ProjectAnalysis:
-    """Aggregated result of analyzing a ZIP of BW or Flogo project files."""
+    """Aggregated result of analyzing a ZIP of TIBCO project files."""
     zip_name: str
     flogo_reports: list[AnalysisReport] = field(default_factory=list)
     bw_reports: list[AnalysisReport] = field(default_factory=list)
+    ems_reports: list[AnalysisReport] = field(default_factory=list)
+    kube_reports: list[AnalysisReport] = field(default_factory=list)
+    log_reports: list[AnalysisReport] = field(default_factory=list)
     cross_flow_issues: list[str] = field(default_factory=list)
     skipped_files: list[str] = field(default_factory=list)
 
@@ -22,7 +25,7 @@ class ProjectAnalysis:
     def total_errors(self) -> int:
         from .base import Severity
         total = 0
-        for r in self.flogo_reports + self.bw_reports:
+        for r in self.flogo_reports + self.bw_reports + self.ems_reports + self.kube_reports + self.log_reports:
             total += sum(1 for f in r.findings if f.severity == Severity.ERROR)
         return total
 
@@ -30,17 +33,27 @@ class ProjectAnalysis:
     def total_warnings(self) -> int:
         from .base import Severity
         total = 0
-        for r in self.flogo_reports + self.bw_reports:
+        for r in self.flogo_reports + self.bw_reports + self.ems_reports + self.kube_reports + self.log_reports:
             total += sum(1 for f in r.findings if f.severity == Severity.WARNING)
         return total
 
     def to_markdown(self) -> str:
         lines = [f"## Project Analysis — `{self.zip_name}`\n"]
 
-        fcount = len(self.flogo_reports)
-        bcount = len(self.bw_reports)
+        counts = []
+        if self.flogo_reports:
+            counts.append(f"{len(self.flogo_reports)} Flogo app(s)")
+        if self.bw_reports:
+            counts.append(f"{len(self.bw_reports)} BW process(es)")
+        if self.ems_reports:
+            counts.append(f"{len(self.ems_reports)} EMS config(s)")
+        if self.kube_reports:
+            counts.append(f"{len(self.kube_reports)} Kubernetes manifest(s)")
+        if self.log_reports:
+            counts.append(f"{len(self.log_reports)} log file(s)")
+
         lines.append(
-            f"**Files analyzed:** {fcount} Flogo app(s), {bcount} BW process(es)  \n"
+            f"**Files analyzed:** {', '.join(counts) or 'none'}  \n"
             f"**Total:** {self.total_errors} error(s), {self.total_warnings} warning(s)\n"
         )
 
@@ -65,6 +78,18 @@ class ProjectAnalysis:
             lines.append(bw_analyzer.report_to_markdown(report))
             lines.append("")
 
+        for report in self.ems_reports:
+            lines.append(report.to_markdown())
+            lines.append("")
+
+        for report in self.kube_reports:
+            lines.append(report.to_markdown())
+            lines.append("")
+
+        for report in self.log_reports:
+            lines.append(report.to_markdown())
+            lines.append("")
+
         return "\n".join(lines)
 
 
@@ -72,7 +97,6 @@ def _cross_flow_flogo(reports: list[AnalysisReport]) -> list[str]:
     """Detect cross-file issues in a set of Flogo reports."""
     issues: list[str] = []
 
-    # Collect all flow names and all files with/without error handlers
     all_flows: dict[str, str] = {}  # flow_name -> source file
     for report in reports:
         for ep in report.overview.get("endpoints", []):
@@ -86,10 +110,6 @@ def _cross_flow_flogo(reports: list[AnalysisReport]) -> list[str]:
                 else:
                     all_flows[flow] = report.source
 
-    # Files with no error handling at all
-    unguarded = [r.source for r in reports if r.error_count > 0 and
-                 all(f.rule_id != "FLOGO-001" for f in r.findings)]
-    # Files where error handler rule fired
     missing_eh = [r.source for r in reports
                   if any(f.rule_id == "FLOGO-001" for f in r.findings)]
     if missing_eh and len(missing_eh) != len(reports):
@@ -104,7 +124,8 @@ def _cross_flow_flogo(reports: list[AnalysisReport]) -> list[str]:
 
 def analyze_zip(zip_bytes: bytes, zip_name: str = "project.zip") -> ProjectAnalysis:
     """
-    Extract and analyze all .flogo and .bwp files inside a ZIP archive.
+    Extract and analyze all supported files inside a ZIP archive.
+    Supports: .flogo, .bwp, .conf (EMS), .yaml/.yml (Kubernetes), .log/.txt (pod logs).
     Returns a ProjectAnalysis with per-file reports and cross-file issues.
     """
     result = ProjectAnalysis(zip_name=zip_name)
@@ -114,7 +135,6 @@ def analyze_zip(zip_bytes: bytes, zip_name: str = "project.zip") -> ProjectAnaly
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             for name in zf.namelist():
-                # Skip hidden files, __MACOSX, etc.
                 if name.startswith("__") or "/." in name or name.endswith("/"):
                     continue
 
@@ -136,9 +156,22 @@ def analyze_zip(zip_bytes: bytes, zip_name: str = "project.zip") -> ProjectAnaly
                     report = bw_analyzer.analyze(content, source=short_name)
                     result.bw_reports.append(report)
 
-                else:
-                    # Skip silently — logs, jars, etc. are not our concern
-                    pass
+                elif lower.endswith(".conf") or short_name.lower() == "tibemsd.conf":
+                    from .ems_analyzer import EMSAnalyzer
+                    report = EMSAnalyzer().analyze(content, source=short_name)
+                    result.ems_reports.append(report)
+
+                elif lower.endswith((".yaml", ".yml")):
+                    from .kube_analyzer import KubeAnalyzer
+                    report = KubeAnalyzer().analyze(content, source=short_name)
+                    result.kube_reports.append(report)
+
+                elif lower.endswith((".log", ".txt")):
+                    from .log_analyzer import LogAnalyzer
+                    report = LogAnalyzer().analyze(content, source=short_name)
+                    result.log_reports.append(report)
+
+                # Other file types (jars, class files, etc.) silently skipped
 
     except zipfile.BadZipFile:
         result.skipped_files.append(f"{zip_name} — not a valid ZIP file")

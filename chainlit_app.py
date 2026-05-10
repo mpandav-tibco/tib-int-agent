@@ -27,7 +27,8 @@ from tibco_agent.report.generator import to_html, to_pdf
 
 log = logging.getLogger(__name__)
 
-_SESSION_RATE_LIMIT = 50  # warn (but don't block) above this many requests per session
+_SESSION_RATE_LIMIT = 50   # warn (but don't block) above this many requests per session
+_MAX_UPLOAD_MB     = 50    # reject individual file uploads larger than this
 
 
 # ── Optional password auth (activate by setting CHAINLIT_AUTH_SECRET env var) ─
@@ -616,8 +617,14 @@ async def _analyze_zip(zip_bytes: bytes, filename: str) -> None:
         result = await loop.run_in_executor(
             None, lambda: analyze_zip(zip_bytes, zip_name=filename)
         )
+        parts_summary = []
+        if result.flogo_reports: parts_summary.append(f"{len(result.flogo_reports)} Flogo")
+        if result.bw_reports:    parts_summary.append(f"{len(result.bw_reports)} BW")
+        if result.ems_reports:   parts_summary.append(f"{len(result.ems_reports)} EMS")
+        if result.kube_reports:  parts_summary.append(f"{len(result.kube_reports)} K8s")
+        if result.log_reports:   parts_summary.append(f"{len(result.log_reports)} log")
         step.output = (
-            f"{len(result.flogo_reports)} Flogo, {len(result.bw_reports)} BW — "
+            f"{', '.join(parts_summary) or 'no supported files'} — "
             f"{result.total_errors} error(s), {result.total_warnings} warning(s)"
         )
     md_text = result.to_markdown()
@@ -635,7 +642,7 @@ async def _analyze_zip(zip_bytes: bytes, filename: str) -> None:
     await cl.Message(
         content=(
             f"**Project Analysis: `{filename}`**\n\n"
-            f"Analyzed **{len(result.flogo_reports)} Flogo** and **{len(result.bw_reports)} BW** file(s).  \n"
+            f"Analyzed: {', '.join(parts_summary) or 'no supported files'}.  \n"
             f"Total: **{result.total_errors} error(s)**, **{result.total_warnings} warning(s)**."
             f"{cross_note}\n\nDownload the full project report (MD), or ask me to review the findings."
         ),
@@ -659,6 +666,22 @@ async def on_message(message: cl.Message) -> None:
         if not isinstance(element, cl.File):
             continue
         has_files = True
+
+        # File size guard — reject before reading to avoid OOM on large uploads
+        try:
+            file_size = Path(element.path).stat().st_size
+        except OSError:
+            file_size = 0
+        if file_size > _MAX_UPLOAD_MB * 1024 * 1024:
+            await cl.Message(
+                content=(
+                    f"**File too large:** `{element.name}` is {file_size // (1024*1024)} MB — "
+                    f"maximum is {_MAX_UPLOAD_MB} MB. Split the file or paste the relevant section."
+                ),
+                author="TARA",
+            ).send()
+            continue
+
         try:
             with open(element.path, "r", encoding="utf-8", errors="replace") as fh:
                 text_content = fh.read()
