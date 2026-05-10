@@ -269,6 +269,82 @@ class BWLargeProcessRule(Rule):
         return findings
 
 
+# ── BWP-007: Localhost URL (ERROR) ───────────────────────────────────────────
+
+_LOCALHOST_RE = re.compile(r"https?://(localhost|127\.0\.0\.1)(:\d+)?", re.IGNORECASE)
+
+
+class BWLocalhostUrlRule(Rule):
+    id = "BWP-007"
+    severity = Severity.ERROR
+    category = "configuration"
+    tags = ["hardcoded", "localhost", "configuration"]
+
+    def check(self, ctx: BWContext) -> list[Finding]:
+        findings = []
+        for p in ctx.processes:
+            for elem in find_by_local(p.raw, *_URL_CONFIG_TAGS):
+                val = text_of(elem)
+                if _LOCALHOST_RE.search(val):
+                    findings.append(Finding(
+                        rule_id=self.id,
+                        severity=self.severity,
+                        title="Localhost URL in Process Configuration",
+                        location=f"process:{p.name} / {local_tag(elem)}",
+                        message=(
+                            f"URL `{val[:80]}` references localhost/127.0.0.1. "
+                            "This will always fail in container or cloud deployments."
+                        ),
+                        recommendation=(
+                            "Replace with a resolvable service name or module property: "
+                            "`%%p_ServiceHost%%` (BW5) / Module Property (BW6)."
+                        ),
+                        tags=self.tags,
+                    ))
+        return findings
+
+
+# ── BWP-008: Missing Substitution Variable ────────────────────────────────────
+
+_SUBST_TAGS = frozenset({
+    "host", "port", "jdbcUrl", "connectionString", "username",
+    "connectionURL", "baseURL", "serviceURL", "endpoint", "endpointURI",
+})
+_SUBST_RE = re.compile(r"%\{[^}]+\}%")
+
+
+class BWMissingSubstVarRule(Rule):
+    id = "BWP-008"
+    severity = Severity.WARNING
+    category = "configuration"
+    tags = ["configuration", "substitution", "environment"]
+
+    def check(self, ctx: BWContext) -> list[Finding]:
+        findings = []
+        for p in ctx.processes:
+            for elem in find_by_local(p.raw, *_SUBST_TAGS):
+                if local_tag(elem) in _PASSWORD_TAGS:
+                    continue  # BWP-003 already covers passwords
+                val = text_of(elem)
+                if len(val) >= 4 and not _PROP_RE.search(val) and not _SUBST_RE.search(val):
+                    findings.append(Finding(
+                        rule_id=self.id,
+                        severity=self.severity,
+                        title="Configuration Value Not Using Substitution Variable",
+                        location=f"process:{p.name} / {local_tag(elem)}",
+                        message=(
+                            f"Element `{local_tag(elem)}` has literal value `{val[:60]}`. "
+                            "Hard-coded config values cannot be overridden per environment."
+                        ),
+                        recommendation=(
+                            "Replace with a BW6 module property or a BW5 substitution "
+                            "variable (`%%p_VariableName%%`) so the value is set per deployment."
+                        ),
+                        tags=self.tags,
+                    ))
+        return findings
+
+
 # ── Positive / strength rules ──────────────────────────────────────────────────
 
 class BWFaultHandlerPresentRule(Rule):

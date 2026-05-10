@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import bisect
+import re
 import weaviate
+from weaviate.classes.config import Property, DataType
 from llama_index.core import Settings
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import Document
@@ -10,28 +13,75 @@ from llama_index.llms.ollama import Ollama
 from tibco_agent.config import settings
 from .sources.base import KnowledgeSource
 
-# Weaviate schema for the knowledge collection.
-_WEAVIATE_SCHEMA = {
-    "class": None,  # filled at runtime from settings.collection_name
-    "vectorizer": "none",  # we supply our own vectors from Ollama
-    "properties": [
-        {"name": "text",        "dataType": ["text"]},
-        {"name": "file_name",   "dataType": ["text"]},
-        {"name": "source_type", "dataType": ["text"]},
-        {"name": "product",     "dataType": ["text"]},
-        {"name": "doc_id",      "dataType": ["text"]},
-    ],
-}
+# Property definitions for the Weaviate v4 collection schema.
+_COLLECTION_PROPERTIES = [
+    Property(name="text",        data_type=DataType.TEXT),
+    Property(name="file_name",   data_type=DataType.TEXT),
+    Property(name="source_type", data_type=DataType.TEXT),
+    Property(name="product",     data_type=DataType.TEXT),
+    Property(name="doc_id",      data_type=DataType.TEXT),
+    Property(name="section",     data_type=DataType.TEXT),
+]
+
+_MD_HEADER_RE   = re.compile(r"^#{1,4}\s+(.+)", re.MULTILINE)
+_HTML_HEADER_RE = re.compile(r"<h[1-4][^>]*>(.*?)</h[1-4]>", re.IGNORECASE | re.DOTALL)
+_HTML_TAG_RE    = re.compile(r"<[^>]+>")
+# Heuristic for plain text: short line, starts uppercase, no trailing punctuation
+_TEXT_HEADING_RE = re.compile(r"^[A-Z][^\n]{0,78}(?<![.,;:!?])\s*$", re.MULTILINE)
 
 
-def _open_client() -> weaviate.Client:
-    return weaviate.Client(settings.weaviate_url)
+def _extract_sections(text: str, filename: str) -> list[tuple[int, str]]:
+    """Return [(char_offset, section_title), ...] sorted by offset."""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    sections: list[tuple[int, str]] = []
+
+    if ext == "md":
+        for m in _MD_HEADER_RE.finditer(text):
+            sections.append((m.start(), m.group(1).strip()))
+    elif ext in {"html", "htm"}:
+        for m in _HTML_HEADER_RE.finditer(text):
+            title = _HTML_TAG_RE.sub("", m.group(1)).strip()
+            if title:
+                sections.append((m.start(), title))
+    else:
+        for m in _TEXT_HEADING_RE.finditer(text):
+            line = m.group(0).strip()
+            if 4 <= len(line) <= 80:
+                sections.append((m.start(), line))
+
+    sections.sort(key=lambda x: x[0])
+    return sections
+
+
+def _section_for_offset(sections: list[tuple[int, str]], offset: int) -> str:
+    """Return the most recent section heading that starts before `offset`."""
+    if not sections:
+        return ""
+    keys = [s[0] for s in sections]
+    idx = bisect.bisect_right(keys, offset) - 1
+    return sections[idx][1] if idx >= 0 else ""
+
+
+def _open_client() -> weaviate.WeaviateClient:
+    url = settings.weaviate_url
+    # Strip scheme for connect_to_custom (it takes host + port separately)
+    bare = url.removeprefix("https://").removeprefix("http://")
+    host, _, port_str = bare.partition(":")
+    port = int(port_str) if port_str.isdigit() else 8080
+    return weaviate.connect_to_custom(
+        http_host=host or "localhost",
+        http_port=port,
+        http_secure=url.startswith("https://"),
+        grpc_host=host or "localhost",
+        grpc_port=50051,
+        grpc_secure=False,
+    )
 
 
 class IngestionPipeline:
     """
     Orchestrates loading from multiple KnowledgeSource instances,
-    chunking, embedding (via Ollama), and storing into Weaviate v3.
+    chunking, embedding (via Ollama), and storing into Weaviate v4.
 
     Usage:
         pipeline = IngestionPipeline()
@@ -74,50 +124,59 @@ class IngestionPipeline:
 
         splitter = SentenceSplitter(chunk_size=self._chunk_size, chunk_overlap=self._chunk_overlap)
         nodes = splitter.get_nodes_from_documents(llama_docs)
+
+        # Pre-compute section maps per source document for citation enrichment
+        _section_maps: dict[str, list[tuple[int, str]]] = {
+            d.source: _extract_sections(d.content, d.source)
+            for d in raw_docs
+        }
+        for node in nodes:
+            source_id = node.ref_doc_id or ""
+            sections = _section_maps.get(source_id, [])
+            offset = node.start_char_idx or 0
+            node.metadata["section"] = _section_for_offset(sections, offset)
         print(f"\nTotal: {len(nodes)} chunks from {len(raw_docs)} document(s)")
 
         client = _open_client()
         class_name = settings.collection_name
 
-        # ── Schema management ──────────────────────────────────────────────────
-        existing = client.schema.get()
-        class_names = {c["class"] for c in existing.get("classes", [])}
+        # ── Schema management (Weaviate v4) ────────────────────────────────────
+        with client:
+            if client.collections.exists(class_name):
+                if reset:
+                    client.collections.delete(class_name)
+                    print(f"Dropped existing collection '{class_name}'.")
+                # else: append mode — collection already exists
 
-        if class_name in class_names:
-            if reset:
-                client.schema.delete_class(class_name)
-                print(f"Dropped existing class '{class_name}'.")
-                class_names.discard(class_name)
-            # else: append mode — schema already exists, keep it
-
-        if class_name not in class_names:
-            schema = dict(_WEAVIATE_SCHEMA)
-            schema["class"] = class_name
-            client.schema.create_class(schema)
-            print(f"Created Weaviate class '{class_name}'.")
-
-        # ── Embed + store ──────────────────────────────────────────────────────
-        print("Embedding and indexing (this takes a minute on first run)...")
-        embed_model = Settings.embed_model
-        stored = 0
-
-        with client.batch as batch:
-            batch.batch_size = 50
-            for node in nodes:
-                text = node.get_content()
-                vector = embed_model.get_text_embedding(text)
-                batch.add_data_object(
-                    data_object={
-                        "text": text,
-                        "file_name": node.metadata.get("file_name", ""),
-                        "source_type": node.metadata.get("source_type", ""),
-                        "product": node.metadata.get("product", ""),
-                        "doc_id": node.node_id,
-                    },
-                    class_name=class_name,
-                    vector=vector,
+            if not client.collections.exists(class_name):
+                client.collections.create(
+                    name=class_name,
+                    properties=_COLLECTION_PROPERTIES,
                 )
-                stored += 1
+                print(f"Created Weaviate collection '{class_name}'.")
+
+            # ── Embed + store ──────────────────────────────────────────────────
+            print("Embedding and indexing (this takes a minute on first run)...")
+            embed_model = Settings.embed_model
+            collection = client.collections.get(class_name)
+            stored = 0
+
+            with collection.batch.dynamic() as batch:
+                for node in nodes:
+                    text = node.get_content()
+                    vector = embed_model.get_text_embedding(text)
+                    batch.add_object(
+                        properties={
+                            "text": text,
+                            "file_name": node.metadata.get("file_name", ""),
+                            "source_type": node.metadata.get("source_type", ""),
+                            "product": node.metadata.get("product", ""),
+                            "doc_id": node.node_id,
+                            "section": node.metadata.get("section", ""),
+                        },
+                        vector=vector,
+                    )
+                    stored += 1
 
         print(f"Done. {stored} chunks stored in Weaviate '{class_name}'.")
         return stored

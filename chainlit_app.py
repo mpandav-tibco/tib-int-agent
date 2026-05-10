@@ -83,6 +83,10 @@ async def set_starters() -> list[cl.Starter]:
             ),
         ),
         cl.Starter(
+            label="Review EMS Config",
+            message="Review the uploaded tibemsd.conf EMS configuration file for security, reliability, and production readiness issues.",
+        ),
+        cl.Starter(
             label="EMS Connection Issue",
             message=(
                 "I need help diagnosing a TIBCO EMS or messaging problem. "
@@ -445,6 +449,52 @@ async def _analyze_log(content: str, filename: str) -> None:
     ).send()
 
 
+async def _analyze_kube(content: str, filename: str) -> None:
+    loop = asyncio.get_event_loop()
+    async with cl.Step(name=f"Kubernetes: {filename}", type="tool") as step:
+        from tibco_agent.analyzers.kube_analyzer import KubeAnalyzer
+        report = await loop.run_in_executor(
+            None, lambda: KubeAnalyzer().analyze(content, source=filename)
+        )
+        step.output = f"{report.error_count} error(s), {report.warning_count} warning(s)"
+    md_text = report.to_markdown()
+    html_text = await loop.run_in_executor(None, lambda: to_html(report))
+    pdf_bytes = await loop.run_in_executor(None, lambda: to_pdf(report))
+    elements = _make_report_elements(Path(filename).stem, md_text, html_text, pdf_bytes)
+    await cl.Message(
+        content=(
+            f"**Kubernetes Manifest Analysis: `{filename}`**\n\n"
+            f"Found **{report.error_count} error(s)** and **{report.warning_count} warning(s)**. "
+            "Download the full report below, or ask me to explain the findings.\n\n"
+            f"**Top issues:**\n{_top_findings_md(report)}"
+        ),
+        elements=elements,
+    ).send()
+
+
+async def _analyze_ems(content: str, filename: str) -> None:
+    loop = asyncio.get_event_loop()
+    async with cl.Step(name=f"EMS Config: {filename}", type="tool") as step:
+        from tibco_agent.analyzers.ems_analyzer import EMSAnalyzer
+        report = await loop.run_in_executor(
+            None, lambda: EMSAnalyzer().analyze(content, source=filename)
+        )
+        step.output = f"{report.error_count} error(s), {report.warning_count} warning(s)"
+    md_text = report.to_markdown()
+    html_text = await loop.run_in_executor(None, lambda: to_html(report))
+    pdf_bytes = await loop.run_in_executor(None, lambda: to_pdf(report))
+    elements = _make_report_elements(Path(filename).stem, md_text, html_text, pdf_bytes)
+    await cl.Message(
+        content=(
+            f"**EMS Configuration Analysis: `{filename}`**\n\n"
+            f"Found **{report.error_count} error(s)** and **{report.warning_count} warning(s)**. "
+            "Download the full report below, or ask me to explain the findings.\n\n"
+            f"**Top issues:**\n{_top_findings_md(report)}"
+        ),
+        elements=elements,
+    ).send()
+
+
 async def _analyze_zip(zip_bytes: bytes, filename: str) -> None:
     loop = asyncio.get_event_loop()
     async with cl.Step(name=f"Project: {filename}", type="tool") as step:
@@ -511,6 +561,10 @@ async def on_message(message: cl.Message) -> None:
         elif name.endswith(".log") or name.endswith(".txt"):
             log_content = text_content
             await _analyze_log(text_content, element.name)
+        elif name.endswith((".yaml", ".yml")):
+            await _analyze_kube(text_content, element.name)
+        elif name.endswith(".conf"):
+            await _analyze_ems(text_content, element.name)
         elif name.endswith(".zip"):
             with open(element.path, "rb") as fh:
                 zip_bytes = fh.read()

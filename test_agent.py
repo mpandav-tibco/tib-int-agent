@@ -3,6 +3,32 @@
 import io
 import sys
 import os
+from unittest.mock import patch
+
+import httpx
+import pytest
+
+
+def _ollama_alive() -> bool:
+    try:
+        return httpx.get("http://localhost:11434/api/tags", timeout=2).status_code == 200
+    except Exception:
+        return False
+
+
+pytestmark = pytest.mark.skipif(not _ollama_alive(), reason="Ollama not running")
+
+
+def test_build_prompt_no_llm():
+    """build_prompt works offline — KB search is mocked, no LLM call needed."""
+    with patch(
+        "tibco_agent.agent.core.search_knowledge",
+        return_value="[Excerpt 1 — flogo | guide.pdf]\nSample knowledge text.",
+    ):
+        from tibco_agent.agent.core import build_prompt
+        result = build_prompt("What is error handling in Flogo?")
+    assert "## Knowledge Base Excerpts" in result
+    assert "What is error handling in Flogo?" in result
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 os.chdir(os.path.dirname(os.path.abspath(__file__)))

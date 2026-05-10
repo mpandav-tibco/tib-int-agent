@@ -9,7 +9,10 @@ To add a new tool:
 
 from __future__ import annotations
 
+import functools
+import os
 import weaviate
+from weaviate.classes.query import Filter, HybridFusion
 from llama_index.core.tools import FunctionTool
 from llama_index.embeddings.ollama import OllamaEmbedding
 
@@ -19,12 +22,16 @@ from tibco_agent.analyzers.log_analyzer import LogAnalyzer
 from tibco_agent.analyzers.bw_analyzer import BWAnalyzer
 
 # Module-level singletons — live for the process lifetime.
-_weaviate_client: weaviate.Client | None = None
+_weaviate_client: weaviate.WeaviateClient | None = None
 _embed_model: OllamaEmbedding | None = None
+_cross_encoder = None  # lazy-loaded on first use
 
 # Hybrid search alpha: 0 = pure BM25, 1 = pure vector. 0.75 weights toward semantic.
 _HYBRID_ALPHA = 0.75
-_SEARCH_LIMIT = 10
+_SEARCH_LIMIT = 20   # fetch more candidates for reranker
+_RERANK_TOP_K = 5    # return top-K after reranking
+_RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+_RERANKER_ENABLED = os.environ.get("RERANKER_ENABLED", "true").lower() not in {"false", "0", "no"}
 
 # Product keywords → Weaviate product tag for metadata filtering
 _PRODUCT_KEYWORDS: list[tuple[str, list[str]]] = [
@@ -45,58 +52,102 @@ def _detect_product(query: str) -> str | None:
     return None
 
 
+def _get_cross_encoder():
+    global _cross_encoder
+    if _cross_encoder is None:
+        from sentence_transformers import CrossEncoder
+        _cross_encoder = CrossEncoder(_RERANKER_MODEL)
+    return _cross_encoder
+
+
+def _rerank(query: str, objects: list[dict]) -> list[dict]:
+    """Score (query, passage) pairs with a cross-encoder and return top-K results."""
+    if not objects:
+        return objects
+    try:
+        ce = _get_cross_encoder()
+        pairs = [(query, obj.get("text", "")) for obj in objects]
+        scores = ce.predict(pairs)
+        ranked = sorted(zip(scores, objects), key=lambda x: x[0], reverse=True)
+        return [obj for _, obj in ranked[:_RERANK_TOP_K]]
+    except Exception:
+        return objects[:_RERANK_TOP_K]
+
+
 def _format_excerpts(objects: list[dict], numbered: bool = True) -> str:
     parts = []
     for i, obj in enumerate(objects, 1):
         source = obj.get("file_name", "unknown")
         product = obj.get("product", "")
-        label = f"{product} | {source}" if product else source
+        section = obj.get("section", "")
+        base = f"{product} | {source}" if product else source
+        label = f"{base} > {section}" if section else base
         prefix = f"[Excerpt {i} — {label}]" if numbered else f"[{label}]"
         parts.append(f"{prefix}\n{obj['text']}")
     return "\n\n---\n\n".join(parts)
 
 
 def _hybrid_search(
-    client: weaviate.Client,
+    client: weaviate.WeaviateClient,
     class_name: str,
     query: str,
     vector: list[float],
     product_filter: str | None = None,
 ) -> list[dict]:
     """Run hybrid (BM25 + vector) search, optionally filtered by product tag."""
-    fields = ["text", "file_name", "product", "source_type"]
-    q = (
-        client.query
-        .get(class_name, fields)
-        .with_hybrid(query=query, vector=vector, alpha=_HYBRID_ALPHA)
-        .with_limit(_SEARCH_LIMIT)
+    return_props = ["text", "file_name", "product", "source_type", "section"]
+    collection = client.collections.get(class_name)
+
+    filt = Filter.by_property("product").equal(product_filter) if product_filter else None
+    result = collection.query.hybrid(
+        query=query,
+        vector=vector,
+        alpha=_HYBRID_ALPHA,
+        limit=_SEARCH_LIMIT,
+        filters=filt,
+        return_properties=return_props,
     )
-    if product_filter:
-        q = q.with_where({
-            "path": ["product"],
-            "operator": "Equal",
-            "valueText": product_filter,
-        })
-    result = q.do()
-    objects = result.get("data", {}).get("Get", {}).get(class_name, [])
+    objects = [o.properties for o in result.objects]
 
     # If product filter returned nothing, retry without it
     if not objects and product_filter:
-        result = (
-            client.query
-            .get(class_name, fields)
-            .with_hybrid(query=query, vector=vector, alpha=_HYBRID_ALPHA)
-            .with_limit(_SEARCH_LIMIT)
-            .do()
+        result = collection.query.hybrid(
+            query=query,
+            vector=vector,
+            alpha=_HYBRID_ALPHA,
+            limit=_SEARCH_LIMIT,
+            return_properties=return_props,
         )
-        objects = result.get("data", {}).get("Get", {}).get(class_name, [])
+        objects = [o.properties for o in result.objects]
     return objects
 
 
-def _get_weaviate_client() -> weaviate.Client:
+def _connect_weaviate() -> weaviate.WeaviateClient:
+    url = settings.weaviate_url
+    bare = url.removeprefix("https://").removeprefix("http://")
+    host, _, port_str = bare.partition(":")
+    port = int(port_str) if port_str.isdigit() else 8080
+    return weaviate.connect_to_custom(
+        http_host=host or "localhost",
+        http_port=port,
+        http_secure=url.startswith("https://"),
+        grpc_host=host or "localhost",
+        grpc_port=50051,
+        grpc_secure=False,
+    )
+
+
+def _get_weaviate_client() -> weaviate.WeaviateClient:
     global _weaviate_client
+    # Reconnect if the singleton is stale (Weaviate restart, network blip, etc.)
+    if _weaviate_client is not None and not _weaviate_client.is_connected():
+        try:
+            _weaviate_client.close()
+        except Exception:
+            pass
+        _weaviate_client = None
     if _weaviate_client is None:
-        _weaviate_client = weaviate.Client(settings.weaviate_url)
+        _weaviate_client = _connect_weaviate()
     return _weaviate_client
 
 
@@ -110,6 +161,7 @@ def _get_embed_model() -> OllamaEmbedding:
     return _embed_model
 
 
+@functools.lru_cache(maxsize=256)
 def search_knowledge(query: str) -> str:
     """
     Eagerly query the TIBCO knowledge base using hybrid search.
@@ -118,9 +170,7 @@ def search_knowledge(query: str) -> str:
     try:
         client = _get_weaviate_client()
         class_name = settings.collection_name
-        existing = client.schema.get()
-        class_names = {c["class"] for c in existing.get("classes", [])}
-        if class_name not in class_names:
+        if not client.collections.exists(class_name):
             return ""
         embed_model = _get_embed_model()
         vector = embed_model.get_text_embedding(query)
@@ -128,24 +178,27 @@ def search_knowledge(query: str) -> str:
         objects = _hybrid_search(client, class_name, query, vector, product)
         if not objects:
             return ""
+        if _RERANKER_ENABLED:
+            objects = _rerank(query, objects)
         return _format_excerpts(objects)
     except Exception:
         return ""
 
 
+invalidate_search_cache = search_knowledge.cache_clear
+
+
 def build_knowledge_tool() -> FunctionTool:
     """
     Retrieval-only RAG tool — hybrid BM25 + vector search in Weaviate.
-    Returns top-10 chunks with source citations to the agent LLM.
+    Returns top-K chunks with source citations to the agent LLM.
     """
     client = _get_weaviate_client()
     class_name = settings.collection_name
 
-    existing = client.schema.get()
-    class_names = {c["class"] for c in existing.get("classes", [])}
-    if class_name not in class_names:
+    if not client.collections.exists(class_name):
         raise RuntimeError(
-            f"Weaviate class '{class_name}' not found. "
+            f"Weaviate collection '{class_name}' not found. "
             "Run:  python ingest.py  to build the knowledge base first."
         )
 

@@ -187,10 +187,22 @@ def run_tests():
     try:
         import weaviate
         from tibco_agent.config import settings
-        client = weaviate.Client(settings.weaviate_url)
-        result = client.query.aggregate(settings.collection_name).with_meta_count().do()
-        count = result["data"]["Aggregate"][settings.collection_name][0]["meta"]["count"]
-        print(f"Weaviate class '{settings.collection_name}': {count} chunks")
+        url = settings.weaviate_url
+        bare = url.removeprefix("https://").removeprefix("http://")
+        host, _, port_str = bare.partition(":")
+        port = int(port_str) if port_str.isdigit() else 8080
+        with weaviate.connect_to_custom(
+            http_host=host or "localhost",
+            http_port=port,
+            http_secure=url.startswith("https://"),
+            grpc_host=host or "localhost",
+            grpc_port=50051,
+            grpc_secure=False,
+        ) as client:
+            collection = client.collections.get(settings.collection_name)
+            agg = collection.aggregate.over_all(total_count=True)
+            count = agg.total_count or 0
+        print(f"Weaviate collection '{settings.collection_name}': {count} chunks")
         assert count > 0, "Collection is empty"
         print(f"[PASS] Knowledge base ready with {count} chunks")
     except Exception as e:

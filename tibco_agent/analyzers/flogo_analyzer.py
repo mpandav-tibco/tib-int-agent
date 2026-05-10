@@ -9,6 +9,7 @@ from .flogo_rules import (
     SelectStarRule, SensitiveLogRule, SubflowDepthRule,
     HttpRetryRule, HardcodedCredentialRule, LargeFlowRule, MissingCorrelationIdRule,
     LargeLogPayloadRule, HardcodedUrlRule,
+    MissingPaginationRule, DuplicateRestEndpointRule, DuplicateConnectorRule,
     AppDescriptionRule, FlowNamingConventionRule, DedicatedConnectorRule,
     SeparationOfConcernsRule, ApiVersioningRule, TimeoutConfiguredRule,
     detect_technologies, detect_pattern, extract_endpoints,
@@ -88,9 +89,12 @@ class FlogoAnalyzer(Analyzer):
             LargeFlowRule(),
             LargeLogPayloadRule(),
             HardcodedUrlRule(),
+            MissingPaginationRule(),
+            DuplicateConnectorRule(),
             # Info-level
             SubflowDepthRule(),
             MissingCorrelationIdRule(),
+            DuplicateRestEndpointRule(),
         ]
 
     def _positive_rules(self) -> list[Rule]:
@@ -124,6 +128,7 @@ class FlogoAnalyzer(Analyzer):
             flows=flows,
             triggers=app.get("triggers", []),
             raw=app,
+            connections=app.get("connections", []),
         )
 
         report = AnalysisReport(

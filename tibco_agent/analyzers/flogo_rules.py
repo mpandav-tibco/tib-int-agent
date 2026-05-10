@@ -29,6 +29,7 @@ class FlogoContext:
     flows: list[FlogoFlow]
     triggers: list[dict]
     raw: dict
+    connections: list[dict] = field(default_factory=list)
 
 
 # ── Reference sets ───────────────────────────────────────────────────────────
@@ -648,3 +649,140 @@ class MissingCorrelationIdRule(Rule):
             ),
             tags=self.tags,
         )]
+
+
+# ── FLOGO-013: Missing Pagination Guard ─────────────────────────────────────
+
+_NO_PAGINATION = _re.compile(
+    r"\bSELECT\b",
+    _re.IGNORECASE,
+)
+_HAS_PAGINATION = _re.compile(
+    r"\b(LIMIT|TOP|ROWNUM|FETCH\s+FIRST|FETCH\s+NEXT)\b",
+    _re.IGNORECASE,
+)
+
+
+class MissingPaginationRule(Rule):
+    id = "FLOGO-013"
+    severity = Severity.WARNING
+    category = "performance"
+    tags = frozenset({"jdbc", "performance", "pagination"})
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        findings = []
+        for flow in ctx.flows:
+            for task in flow.tasks:
+                if not _matches(task.activity_ref, _JDBC_REFS):
+                    continue
+                query_text = str(task.input.get("query", ""))
+                if _NO_PAGINATION.search(query_text) and not _HAS_PAGINATION.search(query_text):
+                    findings.append(Finding(
+                        rule_id=self.id,
+                        severity=self.severity,
+                        title="JDBC Query Missing Pagination Guard",
+                        location=f"flow:{flow.name}/activity:{task.name}",
+                        message=(
+                            "JDBC query has no pagination guard — may return unbounded result "
+                            "sets and cause memory pressure under load."
+                        ),
+                        recommendation=(
+                            "Add LIMIT (MySQL/PostgreSQL), TOP N (SQL Server), ROWNUM (Oracle), "
+                            "or FETCH FIRST N ROWS ONLY (ANSI) to bound result sets."
+                        ),
+                        tags=self.tags,
+                    ))
+        return findings
+
+
+# ── FLOGO-014: Duplicate REST Endpoint Calls ─────────────────────────────────
+
+class DuplicateRestEndpointRule(Rule):
+    id = "FLOGO-014"
+    severity = Severity.INFO
+    category = "performance"
+    tags = frozenset({"rest", "performance", "caching"})
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        findings = []
+        for flow in ctx.flows:
+            uri_counts: dict[str, int] = {}
+            for task in flow.tasks:
+                if not _matches(task.activity_ref, _HTTP_REFS):
+                    continue
+                uri = str(task.input.get("uri", task.input.get("url", ""))).strip()
+                if uri:
+                    uri_counts[uri] = uri_counts.get(uri, 0) + 1
+            for uri, count in uri_counts.items():
+                if count >= 2:
+                    findings.append(Finding(
+                        rule_id=self.id,
+                        severity=self.severity,
+                        title="Duplicate REST Endpoint Calls in Flow",
+                        location=f"flow:{flow.name}",
+                        message=(
+                            f"REST endpoint '{uri}' is called {count}× in the same flow. "
+                            "Repeated identical calls add latency without benefit."
+                        ),
+                        recommendation=(
+                            "Cache the response in a flow variable after the first call, or "
+                            "refactor to batch/combine the requests."
+                        ),
+                        tags=self.tags,
+                    ))
+        return findings
+
+
+# ── FLOGO-015: Duplicate / Localhost Connector ───────────────────────────────
+
+_LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+class DuplicateConnectorRule(Rule):
+    id = "FLOGO-015"
+    severity = Severity.WARNING
+    category = "configuration"
+    tags = frozenset({"connector", "configuration", "security"})
+
+    def check(self, ctx: FlogoContext) -> list[Finding]:
+        findings: list[Finding] = []
+        seen_names: dict[str, str] = {}
+
+        for conn in ctx.connections:
+            name = str(conn.get("name", "")).strip()
+            name_lower = name.lower()
+            if name_lower in seen_names:
+                findings.append(Finding(
+                    rule_id=self.id,
+                    severity=self.severity,
+                    title="Duplicate Connector Name",
+                    location=f"connection:{name}",
+                    message=(
+                        f"Connection name '{name}' appears more than once (previous: "
+                        f"'{seen_names[name_lower]}'). Duplicate names cause silent shadowing."
+                    ),
+                    recommendation="Ensure every connector has a unique, descriptive name.",
+                    tags=self.tags,
+                ))
+            else:
+                seen_names[name_lower] = name
+
+            host = str(conn.get("settings", {}).get("host", "")).strip()
+            if host.lower() in _LOCALHOST_HOSTS or not host:
+                label = repr(host) if host else "(empty)"
+                findings.append(Finding(
+                    rule_id=self.id,
+                    severity=self.severity,
+                    title="Connector Points to Localhost / Empty Host",
+                    location=f"connection:{name}",
+                    message=(
+                        f"Connector '{name}' has host={label}. "
+                        "Localhost addresses break in container / cloud deployments."
+                    ),
+                    recommendation=(
+                        "Replace the host value with a resolvable service name or environment "
+                        "variable reference (e.g. `$env[MY_SERVICE_HOST]`)."
+                    ),
+                    tags=self.tags,
+                ))
+        return findings

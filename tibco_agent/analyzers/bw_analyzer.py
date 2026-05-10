@@ -7,6 +7,7 @@ from .bw_rules import (
     BWActivity, BWContext, BWProcess,
     BWMissingFaultHandlerRule, BWHardcodedUrlRule, BWPlainPasswordRule,
     BWMissingRetryRule, BWSelectStarRule, BWLargeProcessRule,
+    BWLocalhostUrlRule, BWMissingSubstVarRule,
     BWFaultHandlerPresentRule,
     find_by_local, local_tag, text_of,
     _FAULT_HANDLER_TAGS, _HTTP_ACTIVITY_TAGS,
@@ -110,7 +111,9 @@ class BWAnalyzer(Analyzer):
         return [
             BWMissingFaultHandlerRule(),
             BWPlainPasswordRule(),
+            BWLocalhostUrlRule(),
             BWHardcodedUrlRule(),
+            BWMissingSubstVarRule(),
             BWMissingRetryRule(),
             BWSelectStarRule(),
             BWLargeProcessRule(),
