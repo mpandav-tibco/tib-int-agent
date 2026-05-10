@@ -108,11 +108,6 @@ def _build_agent_safe():
 
 @cl.on_chat_start
 async def on_chat_start() -> None:
-    # Custom avatars — TARA (TIBCO blue) and a generic user icon
-    await cl.Avatar(name="TARA",     url="/public/tara_avatar.svg").send()
-    await cl.Avatar(name="Chainlit", url="/public/tara_avatar.svg").send()  # fallback if config name not applied
-    await cl.Avatar(name="User",     url="/public/user_avatar.svg").send()
-
     await cl.ChatSettings(
         [
             Select(
