@@ -30,26 +30,27 @@ def test_build_prompt_no_llm():
     assert "## Knowledge Base Excerpts" in result
     assert "What is error handling in Flogo?" in result
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
+if __name__ == "__main__":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-print("Loading agent (first load is slower — sets up LLM + RAG)...")
-from tibco_agent.agent.core import build_agent, ask
+    print("Loading agent (first load is slower — sets up LLM + RAG)...")
+    from tibco_agent.agent.core import build_agent, ask
 
-agent = build_agent()
-print("Agent ready.\n")
+    agent = build_agent()
+    print("Agent ready.\n")
 
-TESTS = [
-    {
-        "label": "Knowledge Q&A — best practice",
-        "question": "What are the most important best practices for error handling in TIBCO Flogo flows?",
-        "flogo": "",
-        "log": "",
-    },
-    {
-        "label": "File Analysis — .flogo with issues",
-        "question": "Review this Flogo file and tell me all the issues you find.",
-        "flogo": """{
+    TESTS = [
+        {
+            "label": "Knowledge Q&A — best practice",
+            "question": "What are the most important best practices for error handling in TIBCO Flogo flows?",
+            "flogo": "",
+            "log": "",
+        },
+        {
+            "label": "File Analysis — .flogo with issues",
+            "question": "Review this Flogo file and tell me all the issues you find.",
+            "flogo": """{
   "name": "test-app",
   "type": "flogo:app",
   "version": "1.0.0",
@@ -70,19 +71,19 @@ TESTS = [
     }
   }]
 }""",
-        "log": "",
-    },
-]
+            "log": "",
+        },
+    ]
 
-for i, t in enumerate(TESTS, 1):
-    print(f"\n{'='*60}")
-    print(f"TEST {i}: {t['label']}")
-    print("=" * 60)
-    print(f"Q: {t['question'][:80]}...")
-    print("\nA:")
-    response = ask(agent, t["question"], t["flogo"], t["log"])
-    print(response[:1500])
-    print("..." if len(response) > 1500 else "")
+    for i, t in enumerate(TESTS, 1):
+        print(f"\n{'='*60}")
+        print(f"TEST {i}: {t['label']}")
+        print("=" * 60)
+        print(f"Q: {t['question'][:80]}...")
+        print("\nA:")
+        response = ask(agent, t["question"], t["flogo"], t["log"])
+        print(response[:1500])
+        print("..." if len(response) > 1500 else "")
 
-print("\n\nAll agent tests complete.")
-print("Launch UI:  .venv\\Scripts\\streamlit.exe run app.py")
+    print("\n\nAll agent tests complete.")
+    print("Launch UI:  chainlit run chainlit_app.py")

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import bisect
+import logging
 import re
 import weaviate
+
+log = logging.getLogger(__name__)
 from weaviate.classes.config import Property, DataType
 from llama_index.core import Settings
 from llama_index.core.node_parser import SentenceSplitter
@@ -108,13 +111,13 @@ class IngestionPipeline:
 
         raw_docs: list = []
         for source in self._sources:
-            print(f"\nLoading: {source}")
+            log.info("Loading: %s", source)
             loaded = source.load()
             raw_docs.extend(loaded)
-            print(f"  -> {len(loaded)} document(s)")
+            log.info("  -> %d document(s)", len(loaded))
 
         if not raw_docs:
-            print("No documents loaded.")
+            log.warning("No documents loaded.")
             return 0
 
         llama_docs = [
@@ -135,7 +138,7 @@ class IngestionPipeline:
             sections = _section_maps.get(source_id, [])
             offset = node.start_char_idx or 0
             node.metadata["section"] = _section_for_offset(sections, offset)
-        print(f"\nTotal: {len(nodes)} chunks from {len(raw_docs)} document(s)")
+        log.info("Total: %d chunks from %d document(s)", len(nodes), len(raw_docs))
 
         client = _open_client()
         class_name = settings.collection_name
@@ -145,7 +148,7 @@ class IngestionPipeline:
             if client.collections.exists(class_name):
                 if reset:
                     client.collections.delete(class_name)
-                    print(f"Dropped existing collection '{class_name}'.")
+                    log.info("Dropped existing collection '%s'.", class_name)
                 # else: append mode — collection already exists
 
             if not client.collections.exists(class_name):
@@ -153,10 +156,10 @@ class IngestionPipeline:
                     name=class_name,
                     properties=_COLLECTION_PROPERTIES,
                 )
-                print(f"Created Weaviate collection '{class_name}'.")
+                log.info("Created Weaviate collection '%s'.", class_name)
 
             # ── Embed + store ──────────────────────────────────────────────────
-            print("Embedding and indexing (this takes a minute on first run)...")
+            log.info("Embedding and indexing (this takes a minute on first run)...")
             embed_model = Settings.embed_model
             collection = client.collections.get(class_name)
             stored = 0
@@ -178,7 +181,7 @@ class IngestionPipeline:
                     )
                     stored += 1
 
-        print(f"Done. {stored} chunks stored in Weaviate '{class_name}'.")
+        log.info("Done. %d chunks stored in Weaviate '%s'.", stored, class_name)
         return stored
 
     def _configure_llama(self) -> None:

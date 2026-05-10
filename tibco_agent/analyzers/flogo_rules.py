@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re as _re
 from dataclasses import dataclass, field
 
 from .base import Finding, Rule, Severity
@@ -305,7 +306,7 @@ class FlowNamingConventionRule(Rule):
     def check(self, ctx: FlogoContext) -> list[Finding]:
         if not ctx.flows:
             return []
-        well_named = [f for f in ctx.flows if "_" in f.name or f.name.islower()]
+        well_named = [f for f in ctx.flows if "_" in f.name]
         if len(well_named) == len(ctx.flows):
             return [Finding(
                 rule_id=self.id, severity=self.severity,
@@ -528,9 +529,6 @@ class LargeFlowRule(Rule):
                     tags=self.tags,
                 ))
         return findings
-
-
-import re as _re
 
 
 class LargeLogPayloadRule(Rule):

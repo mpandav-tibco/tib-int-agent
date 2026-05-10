@@ -7,9 +7,10 @@ Run with:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import datetime
+import logging
 import os
-import re
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -17,17 +18,12 @@ from typing import Optional
 import chainlit as cl
 from chainlit.input_widget import Select, TextInput, Slider
 
-from tibco_agent.agent.core import PROVIDER_MODEL_HINTS, build_prompt
+from tibco_agent.agent.core import PROVIDER_MODEL_HINTS, build_prompt, _clean_response
 from tibco_agent.config import settings as _cfg
 from tibco_agent import feedback as _feedback
 from tibco_agent.report.generator import to_html, to_pdf
 
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
-
-
-def _clean(text: str) -> str:
-    """Strip <think>...</think> blocks emitted by deepseek-r1 reasoning models."""
-    return _THINK_RE.sub("", text).strip()
+log = logging.getLogger(__name__)
 
 
 # ── Optional password auth (activate by setting CHAINLIT_AUTH_SECRET env var) ─
@@ -41,6 +37,11 @@ def auth_callback(username: str, password: str) -> Optional[cl.User]:
     """
     expected_user = os.getenv("TARA_USERNAME", "tara")
     expected_pass = os.getenv("TARA_PASSWORD", "tara")
+    if os.getenv("CHAINLIT_AUTH_SECRET") and expected_user == "tara" and expected_pass == "tara":
+        log.warning(
+            "CHAINLIT_AUTH_SECRET is set but default credentials (tara/tara) are in use — "
+            "set TARA_USERNAME and TARA_PASSWORD for production deployments."
+        )
     if username == expected_user and password == expected_pass:
         return cl.User(identifier=username, metadata={"role": "admin"})
     return None
@@ -99,13 +100,14 @@ async def set_starters() -> list[cl.Starter]:
 
 # ── Agent builder ─────────────────────────────────────────────────────────────
 
-def _build_agent_safe():
-    """Build the ReActAgent. Returns None if Weaviate / KB is unavailable."""
+def _build_agent_safe(cfg=None):
+    """Build the ReActAgent. Returns (agent, degraded) — agent is None if LLM init fails."""
     try:
         from tibco_agent.agent.core import build_agent
-        return build_agent()
-    except Exception:
-        return None
+        return build_agent(cfg=cfg), False
+    except Exception as exc:
+        log.exception("Agent build failed (degraded mode): %s", exc)
+        return None, True
 
 
 # ── Chat start ────────────────────────────────────────────────────────────────
@@ -171,8 +173,9 @@ async def on_chat_start() -> None:
     ).send()
 
     loop = asyncio.get_event_loop()
-    agent = await loop.run_in_executor(None, _build_agent_safe)
+    agent, degraded = await loop.run_in_executor(None, _build_agent_safe)
     cl.user_session.set("agent", agent)
+    cl.user_session.set("session_cfg", None)  # populated by on_settings_update
     cl.user_session.set("flogo_content", "")
     cl.user_session.set("bw_content", "")
     cl.user_session.set("log_content", "")
@@ -180,6 +183,17 @@ async def on_chat_start() -> None:
     cl.user_session.set("zip_markdown", "")
     cl.user_session.set("last_question", "")
     cl.user_session.set("last_response", "")
+    cl.user_session.set("tmp_files", [])  # track temp paths for cleanup
+
+    if degraded:
+        await cl.Message(
+            author="TARA",
+            content=(
+                "> ⚠️ **Degraded mode** — agent failed to initialise (LLM or Weaviate may be unavailable). "
+                "File analysis still works, but KB search and LLM responses are disabled. "
+                "Check Settings or server logs."
+            ),
+        ).send()
 
     await cl.Message(
         author="TARA",
@@ -191,9 +205,11 @@ async def on_chat_start() -> None:
             "| Capability | How to use |\n"
             "|---|---|\n"
             "| Answer TIBCO questions | Just type your question |\n"
-            "| Review a Flogo app (12 rules) | Upload a `.flogo` file |\n"
+            "| Review a Flogo app (38 checks) | Upload a `.flogo` file |\n"
             "| Review a BW process | Upload a `.bwp` or `.xml` file |\n"
             "| Diagnose pod / app logs | Upload a `.log` or `.txt` file |\n"
+            "| Analyse Kubernetes manifests | Upload a `.yaml` or `.yml` file |\n"
+            "| Review EMS config | Upload a `tibemsd.conf` file |\n"
             "| Analyse a full project | Upload a `.zip` archive |\n\n"
             "**Quick start — click a prompt to begin:**\n\n"
             "- 🔍 *Review the uploaded .flogo file for issues, security gaps, and production readiness.*\n"
@@ -212,24 +228,30 @@ async def on_chat_start() -> None:
 @cl.on_settings_update
 async def on_settings_update(new_settings: dict) -> None:
     try:
-        _cfg.apply(
-            llm_provider=new_settings.get("provider", _cfg.llm_provider),
-            llm_model=new_settings.get("model", _cfg.llm_model),
+        from tibco_agent.config import Settings as AppSettings
+        base = cl.user_session.get("session_cfg") or _cfg
+        session_cfg = dataclasses.replace(
+            base,
+            llm_provider=new_settings.get("provider", base.llm_provider),
+            llm_model=new_settings.get("model", base.llm_model),
             llm_api_key=new_settings.get("api_key", "") or "",
             llm_api_base=new_settings.get("api_base", "") or "",
-            ollama_base_url=new_settings.get("ollama_url", _cfg.ollama_base_url),
-            embed_model=new_settings.get("embed_model", _cfg.embed_model),
-            weaviate_url=new_settings.get("weaviate_url", _cfg.weaviate_url),
-            collection_name=new_settings.get("collection", _cfg.collection_name),
-            request_timeout=float(new_settings.get("timeout", _cfg.request_timeout)),
+            ollama_base_url=new_settings.get("ollama_url", base.ollama_base_url),
+            embed_model=new_settings.get("embed_model", base.embed_model),
+            weaviate_url=new_settings.get("weaviate_url", base.weaviate_url),
+            collection_name=new_settings.get("collection", base.collection_name),
+            request_timeout=float(new_settings.get("timeout", base.request_timeout)),
         )
+        cl.user_session.set("session_cfg", session_cfg)
         loop = asyncio.get_event_loop()
-        agent = await loop.run_in_executor(None, _build_agent_safe)
+        agent, degraded = await loop.run_in_executor(None, lambda: _build_agent_safe(cfg=session_cfg))
         cl.user_session.set("agent", agent)
+        status = " ⚠️ (degraded — check logs)" if degraded else ""
         await cl.Message(
-            content=f"Settings updated — **{_cfg.llm_provider}** / `{_cfg.llm_model}`. Agent rebuilt."
+            content=f"Settings updated — **{session_cfg.llm_provider}** / `{session_cfg.llm_model}`. Agent rebuilt.{status}"
         ).send()
     except Exception as exc:
+        log.exception("Settings update failed: %s", exc)
         await cl.Message(content=f"Settings error: {exc}").send()
 
 
@@ -246,7 +268,8 @@ async def _stream_into(prompt: str, out_msg: cl.Message) -> str:
     from llama_index.core import Settings as LISettings
 
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, configure_llm)
+    session_cfg = cl.user_session.get("session_cfg")
+    await loop.run_in_executor(None, lambda: configure_llm(session_cfg))
     lm = LISettings.llm
 
     accumulated = ""
@@ -265,14 +288,14 @@ async def _stream_into(prompt: str, out_msg: cl.Message) -> str:
             accumulated += token
 
             # Stream only the clean (non-think) delta
-            curr_cleaned = _clean(accumulated)
+            curr_cleaned = _clean_response(accumulated)
             delta = curr_cleaned[prev_cleaned_len:]
             if delta:
                 await out_msg.stream_token(delta)
                 prev_cleaned_len = len(curr_cleaned)
 
         # Flush any trailing clean content not yet streamed
-        final_cleaned = _clean(accumulated)
+        final_cleaned = _clean_response(accumulated)
         remaining = final_cleaned[prev_cleaned_len:]
         if remaining:
             await out_msg.stream_token(remaining)
@@ -289,7 +312,7 @@ async def _stream_into(prompt: str, out_msg: cl.Message) -> str:
             result = await loop.run_in_executor(None, lambda: call_llm(agent, prompt))
         else:
             result = await loop.run_in_executor(None, lambda: str(lm.complete(prompt)))
-        cleaned = _clean(result)
+        cleaned = _clean_response(result)
         out_msg.content = cleaned
         # Caller handles the final update
         return cleaned
@@ -330,6 +353,7 @@ async def on_export_chat(action: cl.Action) -> None:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
         f.write(md_text)
         tmp_path = f.name
+    _track_tmp(tmp_path)
     fname = f"tara-chat-{datetime.date.today()}.md"
     await cl.Message(
         content=f"Chat exported as `{fname}`.",
@@ -346,18 +370,42 @@ def _make_actions() -> list:
     ]
 
 
+@cl.on_chat_end
+async def on_chat_end() -> None:
+    """Remove temporary report files created during this session."""
+    paths: list = cl.user_session.get("tmp_files") or []
+    for p in paths:
+        try:
+            Path(p).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 # ── Report helpers ────────────────────────────────────────────────────────────
+
+def _track_tmp(path: str) -> None:
+    """Register a temp file path for cleanup on session end."""
+    try:
+        paths: list = cl.user_session.get("tmp_files") or []
+        paths.append(path)
+        cl.user_session.set("tmp_files", paths)
+    except Exception:
+        pass  # session may not be active during tests
+
 
 def _make_report_elements(stem: str, md_text: str, html_text: str, pdf_bytes: bytes) -> list:
     elements = []
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
         f.write(md_text)
+        _track_tmp(f.name)
         elements.append(cl.File(name=f"{stem}_report.md", path=f.name, display="side"))
     with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False, encoding="utf-8") as f:
         f.write(html_text)
+        _track_tmp(f.name)
         elements.append(cl.File(name=f"{stem}_report.html", path=f.name, display="side"))
     with tempfile.NamedTemporaryFile(mode="wb", suffix=".pdf", delete=False) as f:
         f.write(pdf_bytes)
+        _track_tmp(f.name)
         elements.append(cl.File(name=f"{stem}_report.pdf", path=f.name, display="side"))
     return elements
 
@@ -410,7 +458,7 @@ async def _analyze_bw(content: str, filename: str) -> None:
         )
         step.output = f"{report.error_count} error(s), {report.warning_count} warning(s)"
     cl.user_session.set("bw_content", content)
-    md_text = bwa._report_to_markdown(report)
+    md_text = bwa.report_to_markdown(report)
     html_text = await loop.run_in_executor(None, lambda: to_html(report))
     pdf_bytes = await loop.run_in_executor(None, lambda: to_pdf(report))
     elements = _make_report_elements(Path(filename).stem, md_text, html_text, pdf_bytes)
@@ -511,6 +559,7 @@ async def _analyze_zip(zip_bytes: bytes, filename: str) -> None:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
         f.write(md_text)
         tmp_path = f.name
+    _track_tmp(tmp_path)
     stem = Path(filename).stem
     cross_note = (
         f"\n**Cross-file issues:** {len(result.cross_flow_issues)} found — ask me to explain them."

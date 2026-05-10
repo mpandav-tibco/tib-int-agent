@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import logging
 import re
 import threading
 from typing import Callable
@@ -10,9 +12,15 @@ from llama_index.core.agent import ReActAgent
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
 
-from tibco_agent.config import settings
+from tibco_agent.config import settings as _default_settings
+from tibco_agent.config import Settings as AppSettings
 from tibco_agent.tools.registry import ToolRegistry
 from tibco_agent.tools.agent_tools import build_knowledge_tool, build_flogo_tool, build_bw_tool, build_log_tool, search_knowledge
+
+log = logging.getLogger(__name__)
+
+# Keep backward-compatible alias used by other modules (e.g. pipeline.py)
+settings = _default_settings
 
 _SYSTEM_PROMPT = """\
 You are TARA (TIBCO AI Review Agent), an expert assistant specializing in:
@@ -107,57 +115,60 @@ def _clean_response(text: str) -> str:
     return _THINK_RE.sub("", text).strip()
 
 
-def _make_llm():
-    provider = settings.llm_provider
+def _make_llm(cfg: AppSettings | None = None):
+    cfg = cfg or _default_settings
+    provider = cfg.llm_provider
 
     if provider == "anthropic":
         from llama_index.llms.anthropic import Anthropic
         return Anthropic(
-            model=settings.llm_model,
-            api_key=settings.llm_api_key,
+            model=cfg.llm_model,
+            api_key=cfg.llm_api_key,
             max_tokens=4096,
         )
 
     if provider == "openai":
         from llama_index.llms.openai import OpenAI
         return OpenAI(
-            model=settings.llm_model,
-            api_key=settings.llm_api_key,
+            model=cfg.llm_model,
+            api_key=cfg.llm_api_key,
             max_tokens=4096,
         )
 
     if provider in ("groq", "ollama-cloud", "custom"):
         from llama_index.llms.openai_like import OpenAILike
-        base = settings.llm_api_base or _PROVIDER_BASE_URLS.get(provider, "")
+        base = cfg.llm_api_base or _PROVIDER_BASE_URLS.get(provider, "")
         return OpenAILike(
-            model=settings.llm_model,
-            api_key=settings.llm_api_key or "na",
+            model=cfg.llm_model,
+            api_key=cfg.llm_api_key or "na",
             api_base=base,
             is_chat_model=True,
             max_tokens=4096,
-            request_timeout=settings.request_timeout,
+            request_timeout=cfg.request_timeout,
         )
 
     # Default: local Ollama
     return Ollama(
-        model=settings.llm_model,
-        base_url=settings.ollama_base_url,
-        request_timeout=settings.request_timeout,
+        model=cfg.llm_model,
+        base_url=cfg.ollama_base_url,
+        request_timeout=cfg.request_timeout,
         context_window=_NUM_CTX,
         additional_kwargs={"options": {"num_ctx": _NUM_CTX}},
     )
 
 
-def configure_llm() -> None:
-    Settings.llm = _make_llm()
+def configure_llm(cfg: AppSettings | None = None) -> None:
+    cfg = cfg or _default_settings
+    Settings.llm = _make_llm(cfg)
     Settings.embed_model = OllamaEmbedding(
-        model_name=settings.embed_model,
-        base_url=settings.ollama_base_url,
+        model_name=cfg.embed_model,
+        base_url=cfg.ollama_base_url,
     )
 
 
-def build_agent(registry: ToolRegistry | None = None) -> ReActAgent:
-    configure_llm()
+def build_agent(registry: ToolRegistry | None = None, cfg: AppSettings | None = None) -> ReActAgent:
+    configure_llm(cfg)
+    log.info("Building ReActAgent (provider=%s model=%s)", (cfg or _default_settings).llm_provider, (cfg or _default_settings).llm_model)
 
     if registry is None:
         registry = ToolRegistry.get()
@@ -175,6 +186,22 @@ def build_agent(registry: ToolRegistry | None = None) -> ReActAgent:
         verbose=False,
         timeout=600.0,
     )
+
+
+_HISTORY_CHAR_LIMIT = 2000  # ~500 tokens — keeps prompt within budget
+
+
+def _trim_history(history: list[dict]) -> list[dict]:
+    """Return the most-recent turns that fit within the char budget."""
+    trimmed: list[dict] = []
+    used = 0
+    for msg in reversed(history):
+        chunk = len(msg.get("content", ""))
+        if used + chunk > _HISTORY_CHAR_LIMIT and trimmed:
+            break
+        trimmed.insert(0, msg)
+        used += chunk
+    return trimmed
 
 
 # Persistent event loop — avoids "Event loop is closed" on repeated calls.
@@ -210,11 +237,14 @@ def build_prompt(
 ) -> str:
     """Assemble the full LLM prompt.  on_step(message, pct) is called at each stage."""
     _step = on_step or (lambda _msg, _pct: None)
+    log.debug("build_prompt: question=%r flogo=%d bw=%d log=%d history=%d",
+              question[:60], len(flogo_content), len(bw_content), len(log_content),
+              len(chat_history or []))
     parts = [question]
 
-    # Inject the last few conversation turns so the LLM can handle follow-ups
+    # Inject the most-recent turns (char-budget trimmed) for follow-up context
     if chat_history:
-        recent = chat_history[-6:]  # Last 3 user+assistant turn pairs
+        recent = _trim_history(chat_history)
         history_lines = [
             "\n\n## Conversation History",
             "_Prior turns — use for follow-up context only, do not re-answer unless asked._",
@@ -259,7 +289,7 @@ def build_prompt(
                 "The BW analysis above is context. Answer the user's question directly and concisely. "
                 "Only surface the parts of the analysis relevant to the question."
             )
-        parts.append("\n\n" + bw_analyzer_obj._report_to_markdown(bw_report) + bw_suffix)
+        parts.append("\n\n" + bw_analyzer_obj.report_to_markdown(bw_report) + bw_suffix)
 
     if flogo_content.strip():
         _step("Analyzing application…", 40)
@@ -310,9 +340,12 @@ def build_prompt(
 
 def call_llm(agent: ReActAgent, prompt: str) -> str:
     """Run a pre-built prompt through the agent LLM."""
+    log.debug("call_llm: prompt_len=%d", len(prompt))
     loop = _get_loop()
     future = asyncio.run_coroutine_threadsafe(_ask_async(agent, prompt), loop)
-    return _clean_response(future.result(timeout=600))
+    result = _clean_response(future.result(timeout=600))
+    log.debug("call_llm: response_len=%d", len(result))
+    return result
 
 
 def ask(

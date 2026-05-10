@@ -164,7 +164,7 @@ class BWAnalyzer(Analyzer):
 
         return report
 
-    def _report_to_markdown(self, report: AnalysisReport) -> str:
+    def report_to_markdown(self, report: AnalysisReport) -> str:
         ov = report.overview
         lines = [_overview_to_markdown(ov, report.source)]
 

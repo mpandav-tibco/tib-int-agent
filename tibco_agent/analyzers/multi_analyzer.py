@@ -62,7 +62,7 @@ class ProjectAnalysis:
 
         for report in self.bw_reports:
             bw_analyzer = BWAnalyzer()
-            lines.append(bw_analyzer._report_to_markdown(report))
+            lines.append(bw_analyzer.report_to_markdown(report))
             lines.append("")
 
         return "\n".join(lines)

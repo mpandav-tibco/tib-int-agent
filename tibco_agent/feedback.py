@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from pathlib import Path
 
-_DB_PATH = Path("./data/feedback.db")
+_DB_PATH = Path(
+    os.environ.get("FEEDBACK_DB_PATH")
+    or str(Path(__file__).resolve().parent.parent / "data" / "feedback.db")
+)
 
 
 def _conn() -> sqlite3.Connection:
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
+    # WAL mode allows concurrent readers + one writer; busy_timeout avoids "database is locked"
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA busy_timeout=5000")
     con.execute("""
         CREATE TABLE IF NOT EXISTS feedback (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
