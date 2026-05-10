@@ -1,21 +1,17 @@
 from __future__ import annotations
 
-import asyncio
-import dataclasses
 import logging
 import re
-import threading
+import time
 from typing import Callable
 
 from llama_index.core import Settings
-from llama_index.core.agent import ReActAgent
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
 
 from tibco_agent.config import settings as _default_settings
 from tibco_agent.config import Settings as AppSettings
-from tibco_agent.tools.registry import ToolRegistry
-from tibco_agent.tools.agent_tools import build_knowledge_tool, build_flogo_tool, build_bw_tool, build_log_tool, search_knowledge
+from tibco_agent.tools.agent_tools import search_knowledge
 
 log = logging.getLogger(__name__)
 
@@ -185,30 +181,9 @@ def _make_embed_model(cfg: AppSettings):
 
 def configure_llm(cfg: AppSettings | None = None) -> None:
     cfg = cfg or _default_settings
+    log.info("configure_llm: provider=%s model=%s", cfg.llm_provider, cfg.llm_model)
     Settings.llm = _make_llm(cfg)
     Settings.embed_model = _make_embed_model(cfg)
-
-
-def build_agent(registry: ToolRegistry | None = None, cfg: AppSettings | None = None) -> ReActAgent:
-    configure_llm(cfg)
-    log.info("Building ReActAgent (provider=%s model=%s)", (cfg or _default_settings).llm_provider, (cfg or _default_settings).llm_model)
-
-    if registry is None:
-        registry = ToolRegistry.get()
-        if len(registry) == 0:
-            registry.register(build_knowledge_tool())
-            registry.register(build_flogo_tool())
-            registry.register(build_bw_tool())
-            registry.register(build_log_tool())
-
-    # LlamaIndex 0.14+ uses workflow-based agents — constructor replaces from_tools()
-    return ReActAgent(
-        tools=registry.all_tools(),
-        llm=Settings.llm,
-        system_prompt=_SYSTEM_PROMPT,
-        verbose=False,
-        timeout=600.0,
-    )
 
 
 _HISTORY_CHAR_LIMIT = 6000  # ~1500 tokens — covers ~3 full diagnostic turns
@@ -227,29 +202,6 @@ def _trim_history(history: list[dict]) -> list[dict]:
     return trimmed
 
 
-# Persistent event loop — avoids "Event loop is closed" on repeated calls.
-# Runs in a background thread so it never conflicts with Streamlit or asyncio.run().
-_loop: asyncio.AbstractEventLoop | None = None
-_loop_thread: threading.Thread | None = None
-_loop_lock = threading.Lock()
-
-
-def _get_loop() -> asyncio.AbstractEventLoop:
-    global _loop, _loop_thread
-    with _loop_lock:
-        if _loop is None or _loop.is_closed():
-            _loop = asyncio.new_event_loop()
-            _loop_thread = threading.Thread(target=_loop.run_forever, daemon=True)
-            _loop_thread.start()
-    return _loop
-
-
-async def _ask_async(agent: ReActAgent, prompt: str) -> str:
-    handler = agent.run(prompt)
-    result = await handler
-    return str(result)
-
-
 def build_prompt(
     question: str,
     flogo_content: str = "",
@@ -260,6 +212,7 @@ def build_prompt(
 ) -> str:
     """Assemble the full LLM prompt.  on_step(message, pct) is called at each stage."""
     _step = on_step or (lambda _msg, _pct: None)
+    t0 = time.perf_counter()
     log.debug("build_prompt: question=%r flogo=%d bw=%d log=%d history=%d",
               question[:60], len(flogo_content), len(bw_content), len(log_content),
               len(chat_history or []))
@@ -297,8 +250,8 @@ def build_prompt(
     if bw_content.strip():
         _step("Analyzing BW process…", 38)
         from tibco_agent.analyzers.bw_analyzer import BWAnalyzer
-        bw_report = BWAnalyzer().analyze(bw_content)
-        bw_analyzer_obj = BWAnalyzer()
+        bw_analyzer = BWAnalyzer()
+        bw_report = bw_analyzer.analyze(bw_content)
         if intent == "review":
             bw_suffix = (
                 "\n\n---\n"
@@ -312,7 +265,7 @@ def build_prompt(
                 "The BW analysis above is context. Answer the user's question directly and concisely. "
                 "Only surface the parts of the analysis relevant to the question."
             )
-        parts.append("\n\n" + bw_analyzer_obj.report_to_markdown(bw_report) + bw_suffix)
+        parts.append("\n\n" + bw_analyzer.report_to_markdown(bw_report) + bw_suffix)
 
     if flogo_content.strip():
         _step("Analyzing application…", 40)
@@ -358,21 +311,21 @@ def build_prompt(
         parts.append("\n\n" + report.to_markdown() + log_suffix)
 
     _step("Sending to LLM…", 65)
-    return "\n".join(parts)
+    result = "\n".join(parts)
+    log.info("build_prompt: chars=%d elapsed=%.1fs", len(result), time.perf_counter() - t0)
+    return result
 
 
-def call_llm(agent: ReActAgent, prompt: str) -> str:
-    """Run a pre-built prompt through the agent LLM."""
+def call_llm(prompt: str) -> str:
+    """Send a pre-built prompt to the configured LLM and return the cleaned response."""
     log.debug("call_llm: prompt_len=%d", len(prompt))
-    loop = _get_loop()
-    future = asyncio.run_coroutine_threadsafe(_ask_async(agent, prompt), loop)
-    result = _clean_response(future.result(timeout=600))
-    log.debug("call_llm: response_len=%d", len(result))
+    t0 = time.perf_counter()
+    result = _clean_response(str(Settings.llm.complete(prompt)))
+    log.info("call_llm: response_len=%d elapsed=%.1fs", len(result), time.perf_counter() - t0)
     return result
 
 
 def ask(
-    agent: ReActAgent,
     question: str,
     flogo_content: str = "",
     log_content: str = "",
@@ -380,4 +333,4 @@ def ask(
     chat_history: list[dict] | None = None,
 ) -> str:
     prompt = build_prompt(question, flogo_content, log_content, bw_content, chat_history=chat_history)
-    return call_llm(agent, prompt)
+    return call_llm(prompt)

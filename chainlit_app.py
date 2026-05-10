@@ -18,7 +18,9 @@ from typing import Optional
 import chainlit as cl
 from chainlit.input_widget import Select, TextInput, Slider
 
-from tibco_agent.agent.core import PROVIDER_MODEL_HINTS, build_prompt, _clean_response
+import time
+
+from tibco_agent.agent.core import PROVIDER_MODEL_HINTS, build_prompt, _clean_response, configure_llm
 from tibco_agent.config import settings as _cfg
 from tibco_agent import feedback as _feedback
 from tibco_agent.report.generator import to_html, to_pdf
@@ -100,16 +102,16 @@ async def set_starters() -> list[cl.Starter]:
     ]
 
 
-# ── Agent builder ─────────────────────────────────────────────────────────────
+# ── LLM initialiser ──────────────────────────────────────────────────────────
 
-def _build_agent_safe(cfg=None):
-    """Build the ReActAgent. Returns (agent, degraded) — agent is None if LLM init fails."""
+def _init_llm_safe(cfg=None) -> bool:
+    """Initialise LLM + embedding model. Returns False (degraded) if setup fails."""
     try:
-        from tibco_agent.agent.core import build_agent
-        return build_agent(cfg=cfg), False
+        configure_llm(cfg)
+        return True
     except Exception as exc:
-        log.exception("Agent build failed (degraded mode): %s", exc)
-        return None, True
+        log.exception("LLM init failed (degraded mode): %s", exc)
+        return False
 
 
 # ── Chat start ────────────────────────────────────────────────────────────────
@@ -175,8 +177,7 @@ async def on_chat_start() -> None:
     ).send()
 
     loop = asyncio.get_event_loop()
-    agent, degraded = await loop.run_in_executor(None, _build_agent_safe)
-    cl.user_session.set("agent", agent)
+    degraded = not await loop.run_in_executor(None, _init_llm_safe)
     cl.user_session.set("session_cfg", None)  # populated by on_settings_update
     cl.user_session.set("flogo_content", "")
     cl.user_session.set("bw_content", "")
@@ -256,9 +257,8 @@ async def on_settings_update(new_settings: dict) -> None:
             log.info("Search cache invalidated: Weaviate config changed")
 
         loop = asyncio.get_event_loop()
-        agent, degraded = await loop.run_in_executor(None, lambda: _build_agent_safe(cfg=session_cfg))
-        cl.user_session.set("agent", agent)
-        status = " ⚠️ (degraded — check logs)" if degraded else ""
+        ok = await loop.run_in_executor(None, lambda: _init_llm_safe(cfg=session_cfg))
+        status = " ⚠️ (degraded — check logs)" if not ok else ""
         await cl.Message(
             content=f"Settings updated — **{session_cfg.llm_provider}** / `{session_cfg.llm_model}`. Agent rebuilt.{status}"
         ).send()
@@ -269,20 +269,69 @@ async def on_settings_update(new_settings: dict) -> None:
 
 # ── Streaming LLM ─────────────────────────────────────────────────────────────
 
+class _ThinkFilter:
+    """Incremental O(n) filter for <think>...</think> blocks (deepseek-r1 reasoning models).
+
+    The naive approach calls _clean_response(accumulated) on every token — O(n²) in
+    response length for long reasoning chains. This class maintains a state machine
+    that processes each new token in O(len(token)) instead.
+    """
+    _OPEN  = "<think>"
+    _CLOSE = "</think>"
+
+    def __init__(self) -> None:
+        self._in_think = False
+        self._buf = ""  # lookahead buffer for partial tags that span token boundaries
+
+    def feed(self, token: str) -> str:
+        """Feed one token; return the clean output delta (empty while inside <think>)."""
+        out: list[str] = []
+        data = self._buf + token
+        self._buf = ""
+        while data:
+            if self._in_think:
+                end = data.lower().find(self._CLOSE)
+                if end == -1:
+                    keep = len(self._CLOSE) - 1
+                    self._buf = data[-keep:] if len(data) >= keep else data
+                    break
+                data = data[end + len(self._CLOSE):]
+                self._in_think = False
+            else:
+                start = data.lower().find(self._OPEN)
+                if start == -1:
+                    keep = len(self._OPEN) - 1
+                    if len(data) >= keep:
+                        out.append(data[:-keep])
+                        self._buf = data[-keep:]
+                    else:
+                        self._buf = data
+                    break
+                out.append(data[:start])
+                data = data[start + len(self._OPEN):]
+                self._in_think = True
+        return "".join(out)
+
+    def finalize(self) -> str:
+        """Flush any remaining safe buffered content (partial open-tag lookahead)."""
+        if self._in_think:
+            return ""
+        result = self._buf
+        self._buf = ""
+        return result
+
+
 async def _stream_into(prompt: str, out_msg: cl.Message) -> tuple[str, bool]:
     """
-    Stream LLM response token-by-token into out_msg.
-    Handles <think>...</think> blocks (deepseek-r1) by filtering them silently.
+    Stream LLM response token-by-token into out_msg using an O(n) think-block filter.
     Falls back to a blocking call if the provider does not support streaming.
 
     Returns (response_text, was_streamed).
-    - was_streamed=True  → content already rendered in browser via stream_token events;
-                           caller must NOT call out_msg.update() or the full text will
-                           be sent again, producing a double render in Chainlit 2.x.
-    - was_streamed=False → content set on out_msg.content; caller must call update()
-                           to push it to the browser.
+    - was_streamed=True  → content already rendered via stream_token events;
+                           caller must NOT call out_msg.update() — that would re-send
+                           the full accumulated text, causing a double render (Chainlit 2.x).
+    - was_streamed=False → content set on out_msg.content; caller must call update().
     """
-    from tibco_agent.agent.core import configure_llm
     from llama_index.core import Settings as LISettings
 
     loop = asyncio.get_event_loop()
@@ -291,46 +340,42 @@ async def _stream_into(prompt: str, out_msg: cl.Message) -> tuple[str, bool]:
     lm = LISettings.llm
 
     accumulated = ""
-    prev_cleaned_len = 0
+    t0 = time.perf_counter()
+    first_token_t: float | None = None
 
     try:
-        # astream_complete may be an async generator function or a coroutine
         raw = lm.astream_complete(prompt)
         if asyncio.iscoroutine(raw):
             raw = await raw
 
+        filt = _ThinkFilter()
         async for chunk in raw:
             token = chunk.delta or getattr(chunk, "text", "") or ""
             if not token:
                 continue
+            if first_token_t is None:
+                first_token_t = time.perf_counter() - t0
             accumulated += token
+            clean_delta = filt.feed(token)
+            if clean_delta:
+                await out_msg.stream_token(clean_delta)
 
-            # Stream only the clean (non-think) delta
-            curr_cleaned = _clean_response(accumulated)
-            delta = curr_cleaned[prev_cleaned_len:]
-            if delta:
-                await out_msg.stream_token(delta)
-                prev_cleaned_len = len(curr_cleaned)
-
-        # Flush any trailing clean content not yet streamed
-        final_cleaned = _clean_response(accumulated)
-        remaining = final_cleaned[prev_cleaned_len:]
+        remaining = filt.finalize()
         if remaining:
             await out_msg.stream_token(remaining)
 
-        return final_cleaned, True  # was_streamed — caller must NOT call update()
+        final_cleaned = _clean_response(accumulated)  # one final call for session history
+        elapsed = time.perf_counter() - t0
+        log.info("stream: ttft=%.2fs total=%.1fs tokens_est=%d provider=%s",
+                 first_token_t or 0, elapsed, len(accumulated) // 4,
+                 (session_cfg or _cfg).llm_provider)
+        return final_cleaned, True
 
     except Exception:
-        # Provider does not support streaming — fall back to blocking call
-        agent = cl.user_session.get("agent")
-        if agent:
-            from tibco_agent.agent.core import call_llm
-            result = await loop.run_in_executor(None, lambda: call_llm(agent, prompt))
-        else:
-            result = await loop.run_in_executor(None, lambda: str(lm.complete(prompt)))
+        result = await loop.run_in_executor(None, lambda: str(lm.complete(prompt)))
         cleaned = _clean_response(result)
         out_msg.content = cleaned
-        return cleaned, False  # not streamed — caller must call update()
+        return cleaned, False
 
 
 # ── Feedback & export actions ─────────────────────────────────────────────────
@@ -737,4 +782,4 @@ async def on_message(message: cl.Message) -> None:
     cl.user_session.set("last_response", response)
     chat_history.append({"role": "user", "content": question})
     chat_history.append({"role": "assistant", "content": response})
-    cl.user_session.set("chat_history", chat_history[-8:])
+    cl.user_session.set("chat_history", chat_history[-20:])

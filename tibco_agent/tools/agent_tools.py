@@ -1,31 +1,23 @@
-"""
-Factory functions that create LlamaIndex tools from the domain analyzers.
-Each function returns a BaseTool ready for registration in ToolRegistry.
-
-To add a new tool:
-1. Write a function build_<name>_tool() -> BaseTool
-2. Register it in agent/core.py  build_agent()
-"""
-
+"""Weaviate search utilities used by build_prompt() for KB retrieval."""
 from __future__ import annotations
 
 import functools
+import logging
 import os
 import threading
+import time
 import weaviate
-from weaviate.classes.query import Filter, HybridFusion
-from llama_index.core.tools import FunctionTool
+from weaviate.classes.query import Filter
 from llama_index.embeddings.ollama import OllamaEmbedding
 
 from tibco_agent.config import settings
-from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
-from tibco_agent.analyzers.log_analyzer import LogAnalyzer
-from tibco_agent.analyzers.bw_analyzer import BWAnalyzer
+
+log = logging.getLogger(__name__)
 
 # Module-level singletons — live for the process lifetime.
 _weaviate_client: weaviate.WeaviateClient | None = None
 _weaviate_lock = threading.Lock()  # guards reconnect across concurrent sessions
-_embed_model: OllamaEmbedding | None = None
+_embed_model = None   # may be OllamaEmbedding or OpenAIEmbedding depending on provider
 _cross_encoder = None  # lazy-loaded on first use
 
 # Hybrid search alpha: 0 = pure BM25, 1 = pure vector. 0.75 weights toward semantic.
@@ -154,7 +146,16 @@ def _get_weaviate_client() -> weaviate.WeaviateClient:
         return _weaviate_client
 
 
-def _get_embed_model() -> OllamaEmbedding:
+def _get_embed_model():
+    """Return the active embedding model.
+
+    Respects configure_llm() provider selection: if Settings.embed_model has been
+    set (e.g. OpenAIEmbedding for openai provider), use it; otherwise fall back to
+    the module-level Ollama singleton so the first call before configure_llm() works.
+    """
+    from llama_index.core import Settings as LISettings
+    if getattr(LISettings, "embed_model", None) is not None:
+        return LISettings.embed_model
     global _embed_model
     if _embed_model is None:
         _embed_model = OllamaEmbedding(
@@ -167,9 +168,11 @@ def _get_embed_model() -> OllamaEmbedding:
 @functools.lru_cache(maxsize=256)
 def search_knowledge(query: str) -> str:
     """
-    Eagerly query the TIBCO knowledge base using hybrid search.
+    Query the TIBCO knowledge base using hybrid BM25 + vector search.
     Returns formatted excerpts with source citations, or empty string on failure.
+    Results are LRU-cached — call invalidate_search_cache() on Weaviate config change.
     """
+    t0 = time.perf_counter()
     try:
         client = _get_weaviate_client()
         class_name = settings.collection_name
@@ -183,109 +186,12 @@ def search_knowledge(query: str) -> str:
             return ""
         if _RERANKER_ENABLED:
             objects = _rerank(query, objects)
+        log.info("search_knowledge: %d results in %.2fs (reranked=%s product=%s)",
+                 len(objects), time.perf_counter() - t0, _RERANKER_ENABLED, product)
         return _format_excerpts(objects)
-    except Exception:
+    except Exception as exc:
+        log.warning("search_knowledge failed (returning empty): %s", exc)
         return ""
 
 
 invalidate_search_cache = search_knowledge.cache_clear
-
-
-def build_knowledge_tool() -> FunctionTool:
-    """
-    Retrieval-only RAG tool — hybrid BM25 + vector search in Weaviate.
-    Returns top-K chunks with source citations to the agent LLM.
-    """
-    client = _get_weaviate_client()
-    class_name = settings.collection_name
-
-    if not client.collections.exists(class_name):
-        raise RuntimeError(
-            f"Weaviate collection '{class_name}' not found. "
-            "Run:  python ingest.py  to build the knowledge base first."
-        )
-
-    embed_model = _get_embed_model()
-
-    def search_tibco_knowledge(query: str, product: str = "") -> str:
-        """Search TIBCO Integration knowledge base and return relevant excerpts with citations."""
-        vector = embed_model.get_text_embedding(query)
-        product_filter = product.strip().lower() or _detect_product(query)
-        objects = _hybrid_search(client, class_name, query, vector, product_filter)
-        if not objects:
-            return "No relevant information found in the knowledge base for this query."
-        return _format_excerpts(objects)
-
-    return FunctionTool.from_defaults(
-        fn=search_tibco_knowledge,
-        name="tibco_knowledge_search",
-        description=(
-            "Search the TIBCO Integration & Messaging knowledge base. "
-            "Use for: best practices, error explanations, configuration patterns, "
-            "JDBC/EMS/HTTP setup, Kubernetes deployment, performance tuning for BW and Flogo. "
-            "Optional 'product' param to filter: flogo | bw | ems | ftl | eftl. "
-            "Returns top-10 excerpts with source citations."
-        ),
-    )
-
-
-def build_flogo_tool(analyzer: FlogoAnalyzer | None = None) -> FunctionTool:
-    """Static analysis of .flogo application files."""
-    _analyzer = analyzer or FlogoAnalyzer()
-
-    def analyze_flogo_file(content: str) -> str:
-        """Analyze a TIBCO Flogo .flogo JSON file and return a markdown findings report."""
-        return _analyzer.analyze(content).to_markdown()
-
-    return FunctionTool.from_defaults(
-        fn=analyze_flogo_file,
-        name="analyze_flogo_file",
-        description=(
-            "Analyze a TIBCO Flogo application (.flogo JSON content as string). "
-            "Detects: missing error handlers, HTTP timeouts, disabled SSL, SELECT * queries, "
-            "sensitive data logging, and high subflow complexity. "
-            "Call this whenever the user provides or uploads a .flogo file."
-        ),
-    )
-
-
-def build_bw_tool(analyzer: BWAnalyzer | None = None) -> FunctionTool:
-    """Static analysis of TIBCO BusinessWorks 6 / BWCE .bwp XML process files."""
-    _analyzer = analyzer or BWAnalyzer()
-
-    def analyze_bw_process(xml_content: str) -> str:
-        """Analyze a TIBCO BW6 process file (.bwp XML content as string) and return findings."""
-        report = _analyzer.analyze(xml_content)
-        return _analyzer.report_to_markdown(report)
-
-    return FunctionTool.from_defaults(
-        fn=analyze_bw_process,
-        name="analyze_bw_process",
-        description=(
-            "Analyze a TIBCO BusinessWorks 6 or BWCE process file (.bwp XML as string). "
-            "Detects: missing fault handlers, hardcoded URLs, plain-text passwords, "
-            "HTTP activities without retry, SELECT * in JDBC queries, and oversized processes. "
-            "Call this when the user provides or uploads a .bwp or BW process XML file."
-        ),
-    )
-
-
-def build_log_tool(analyzer: LogAnalyzer | None = None) -> FunctionTool:
-    """Pattern-based diagnosis of BW/Flogo Kubernetes pod logs."""
-    _analyzer = analyzer or LogAnalyzer()
-
-    def analyze_pod_log(log_text: str) -> str:
-        """Analyze a Kubernetes pod log from a BW or Flogo container."""
-        return _analyzer.analyze(log_text).to_markdown()
-
-    return FunctionTool.from_defaults(
-        fn=analyze_pod_log,
-        name="analyze_pod_log",
-        description=(
-            "Analyze Kubernetes pod log text from a TIBCO BW or Flogo container. "
-            "Matches against known error patterns: OOMKilled, CrashLoopBackOff, "
-            "JDBC/EMS connection failures, NullPointerException, JVM OOM, "
-            "substitution variable errors, readiness probe failures, and more. "
-            "Call this whenever the user pastes or uploads pod logs."
-        ),
-    )
