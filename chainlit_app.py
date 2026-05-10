@@ -179,22 +179,39 @@ async def on_chat_start() -> None:
     ).send()
 
     # ── Load agent config from ?agent_id= URL param (AgentForge) ─────────────
+    # Chainlit 2.x stores HTTP headers in session.environ using WSGI-style
+    # HTTP_* keys (not session.headers, which doesn't exist).
+    # Priority:
+    #   1. QUERY_STRING in environ — works if Chainlit's socket.io client forwards
+    #      the page URL's query params (varies by Chainlit version)
+    #   2. HTTP_REFERER in environ — the iframe's own src URL, which the browser
+    #      sends as Referer for same-origin socket.io connections
+    #   3. AGENT_ID env var — for Docker deployments with a fixed single agent
     agent_config = None
+    raw_agent_id = ""
     try:
-        query_params = cl.context.session.client_type  # may not always carry params
-    except Exception:
-        query_params = None
+        from urllib.parse import parse_qs, urlparse
+        environ = getattr(cl.context.session, "environ", {}) or {}
 
-    # Chainlit 2.x exposes URL query params via the startup request headers.
-    # The agent_id is also injectable via AGENT_ID env var for Docker deployments.
-    raw_agent_id = os.getenv("AGENT_ID", "")
-    try:
-        headers = getattr(cl.context.session, "headers", {}) or {}
-        referer = headers.get("referer", "") or headers.get("Referer", "")
-        if "agent_id=" in referer:
-            raw_agent_id = referer.split("agent_id=")[-1].split("&")[0].strip()
-    except Exception:
-        pass
+        # 1. QUERY_STRING (e.g. "agent_id=xxx&EIO=4&transport=websocket")
+        qs = environ.get("QUERY_STRING", "")
+        qs_params = parse_qs(qs)
+        raw_agent_id = qs_params.get("agent_id", [""])[0].strip()
+
+        # 2. HTTP_REFERER — full URL the browser reports for same-origin requests
+        #    Both direct tab (http://localhost:8080?agent_id=xxx) and iframe src
+        #    result in the Referer pointing at the Chainlit URL with the query param.
+        if not raw_agent_id:
+            referer = environ.get("HTTP_REFERER", "")
+            if "agent_id=" in referer:
+                ref_params = parse_qs(urlparse(referer).query)
+                raw_agent_id = ref_params.get("agent_id", [""])[0].strip()
+    except Exception as e:
+        log.debug("agent_id extraction failed: %s", e)
+
+    # 3. Docker / env-var injection for single-agent deployments
+    if not raw_agent_id:
+        raw_agent_id = os.getenv("AGENT_ID", "").strip()
 
     if raw_agent_id:
         agent_config = _agent_store.get(raw_agent_id)
@@ -246,13 +263,20 @@ async def on_chat_start() -> None:
         ).send()
 
     if agent_config:
-        # Custom agent welcome
+        # Custom agent welcome — shows identity + KB status as a quick sanity check
+        kb_note = (
+            "✅ Knowledge base is ready — ask me anything!"
+            if agent_config.status == "ready"
+            else "⚠️ Knowledge base not built yet — I'll answer from my system prompt only until you ingest some documents."
+        )
+        desc_line = f"\n\n_{agent_config.description}_" if agent_config.description else ""
         await cl.Message(
             author=agent_config.name,
             content=(
-                f"## Hi, I'm **{agent_config.name}** — {agent_config.title}\n\n"
-                f"{agent_config.description}\n\n"
-                "_Upload files or type a question to get started._"
+                f"## Hi, I'm **{agent_config.name}**"
+                + (f" — {agent_config.title}" if agent_config.title else "")
+                + desc_line
+                + f"\n\n{kb_note}"
             ),
         ).send()
     else:
