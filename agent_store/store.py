@@ -34,6 +34,17 @@ CREATE TABLE IF NOT EXISTS agents (
 )
 """
 
+_CREATE_URLS_TABLE = """
+CREATE TABLE IF NOT EXISTS agent_urls (
+    id         TEXT PRIMARY KEY,
+    agent_id   TEXT NOT NULL,
+    url        TEXT NOT NULL,
+    label      TEXT NOT NULL DEFAULT '',
+    added_at   TEXT NOT NULL,
+    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+)
+"""
+
 _COLUMNS = [
     "id", "name", "title", "description", "system_prompt", "collection_name",
     "llm_provider", "llm_model", "llm_api_key", "llm_api_base", "embed_model",
@@ -64,7 +75,9 @@ class AgentStore:
                 self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
                 self._conn.execute("PRAGMA journal_mode=WAL")
                 self._conn.execute("PRAGMA busy_timeout=5000")
+                self._conn.execute("PRAGMA foreign_keys=ON")
                 self._conn.execute(_CREATE_TABLE)
+                self._conn.execute(_CREATE_URLS_TABLE)
                 self._conn.commit()
             return self._conn
 
@@ -149,6 +162,47 @@ class AgentStore:
         con = self._get_conn()
         rows = con.execute(f"SELECT {cols} FROM agents ORDER BY created_at DESC").fetchall()
         return [_row_to_agent(r) for r in rows]
+
+    def list_ingesting(self) -> list[Agent]:
+        """Return all agents currently stuck in 'ingesting' status."""
+        cols = ", ".join(_COLUMNS)
+        con = self._get_conn()
+        rows = con.execute(
+            f"SELECT {cols} FROM agents WHERE status='ingesting'"
+        ).fetchall()
+        return [_row_to_agent(r) for r in rows]
+
+    # ── URL CRUD ──────────────────────────────────────────────────────────────
+
+    def add_url(self, agent_id: str, url: str, label: str = "") -> dict:
+        url_id = uuid.uuid4().hex
+        now = _now()
+        with self._get_conn() as con:
+            con.execute(
+                "INSERT INTO agent_urls (id, agent_id, url, label, added_at) VALUES (?,?,?,?,?)",
+                (url_id, agent_id, url, label, now),
+            )
+        return {"id": url_id, "agent_id": agent_id, "url": url, "label": label, "added_at": now}
+
+    def list_urls(self, agent_id: str) -> list[dict]:
+        con = self._get_conn()
+        rows = con.execute(
+            "SELECT id, agent_id, url, label, added_at FROM agent_urls WHERE agent_id=? ORDER BY added_at",
+            (agent_id,),
+        ).fetchall()
+        return [
+            {"id": r[0], "agent_id": r[1], "url": r[2], "label": r[3], "added_at": r[4]}
+            for r in rows
+        ]
+
+    def delete_url(self, url_id: str) -> bool:
+        with self._get_conn() as con:
+            cur = con.execute("DELETE FROM agent_urls WHERE id=?", (url_id,))
+            return cur.rowcount > 0
+
+    def get_urls_for_agent(self, agent_id: str) -> list[str]:
+        """Return just the URL strings for use during ingestion."""
+        return [r["url"] for r in self.list_urls(agent_id)]
 
 
 # Module-level singleton used by the FastAPI router and Chainlit app.

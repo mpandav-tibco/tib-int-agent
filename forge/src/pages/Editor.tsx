@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, RefreshCw, Save, Zap } from "lucide-react";
 import {
-  createAgent, getChatUrl, getAgent, getStatus, listFiles, triggerIngest, updateAgent,
+  ArrowLeft, ExternalLink, Globe, Link2, RefreshCw, Save, ThumbsDown, ThumbsUp, Trash2, Zap,
+} from "lucide-react";
+import {
+  addUrl, createAgent, deleteUrl, getChatUrl, getAgent, getFeedback, getStatus,
+  listFiles, listUrls, triggerIngest, updateAgent,
 } from "../api";
 import FileUpload from "../components/FileUpload";
 import IngestStatus from "../components/IngestStatus";
@@ -18,7 +21,7 @@ const PROVIDER_HINTS: Record<string, string> = {
   custom:         "depends on your provider",
 };
 
-type RightTab = "kb" | "chat";
+type RightTab = "kb" | "chat" | "feedback";
 
 interface FormState {
   name: string;
@@ -47,7 +50,9 @@ export default function Editor() {
   const [saved, setSaved] = useState(false);
   const [rightTab, setRightTab] = useState<RightTab>("kb");
   const [chatUrl, setChatUrl] = useState<string | null>(null);
-  const [iframeKey, setIframeKey] = useState(0);  // increment to reload the iframe
+  const [iframeKey, setIframeKey] = useState(0);
+  const [newUrl, setNewUrl] = useState("");
+  const [newUrlLabel, setNewUrlLabel] = useState("");
   const prevStatus = useRef<string | undefined>(undefined);
 
   const { data: agent } = useQuery({
@@ -70,7 +75,19 @@ export default function Editor() {
     refetchInterval: (q) => q.state.data?.status === "ingesting" ? 3000 : 10000,
   });
 
-  // Populate form when agent data arrives
+  const { data: urls = [], refetch: refetchUrls } = useQuery({
+    queryKey: ["urls", id],
+    queryFn: () => listUrls(id!),
+    enabled: !isNew,
+  });
+
+  const { data: feedback } = useQuery({
+    queryKey: ["feedback", id],
+    queryFn: () => getFeedback(id!),
+    enabled: !isNew && rightTab === "feedback",
+    refetchInterval: rightTab === "feedback" ? 15000 : false,
+  });
+
   useEffect(() => {
     if (agent) {
       setForm({
@@ -82,14 +99,13 @@ export default function Editor() {
     }
   }, [agent]);
 
-  // Fetch chat URL once agent becomes ready; auto-switch to Test Chat tab
+  // Fetch chat URL for saved agents; auto-switch to Test Chat after ingest completes
   useEffect(() => {
     if (!id) return;
     const currentStatus = status?.status ?? agent?.status;
-    if (currentStatus === "ready" && !chatUrl) {
+    if (!chatUrl) {
       getChatUrl(id).then(({ url }) => setChatUrl(url)).catch(() => {});
     }
-    // Auto-switch to Test Chat when ingestion just finished
     if (prevStatus.current === "ingesting" && currentStatus === "ready") {
       setRightTab("chat");
       setIframeKey((k) => k + 1);
@@ -121,11 +137,24 @@ export default function Editor() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["status", id] }),
   });
 
-  const isReady = status?.status === "ready" || agent?.status === "ready";
+  const addUrlMutation = useMutation({
+    mutationFn: () => addUrl(id!, newUrl.trim(), newUrlLabel.trim()),
+    onSuccess: () => {
+      setNewUrl("");
+      setNewUrlLabel("");
+      refetchUrls();
+    },
+  });
 
-  const reloadChat = () => {
-    setIframeKey((k) => k + 1);
-  };
+  const deleteUrlMutation = useMutation({
+    mutationFn: (urlId: string) => deleteUrl(id!, urlId),
+    onSuccess: () => refetchUrls(),
+  });
+
+  const isReady = status?.status === "ready" || agent?.status === "ready";
+  const isIngesting = status?.status === "ingesting" || agent?.status === "ingesting";
+
+  const reloadChat = () => setIframeKey((k) => k + 1);
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 overflow-hidden">
@@ -169,7 +198,7 @@ export default function Editor() {
         </div>
       </header>
 
-      {/* ── Body: two-column, fills remaining height ────────────────────── */}
+      {/* ── Body ────────────────────────────────────────────────────────────── */}
       <div className="flex-1 flex overflow-hidden">
 
         {/* ── Left: scrollable config form ──────────────────────────────── */}
@@ -178,7 +207,6 @@ export default function Editor() {
           {/* Identity */}
           <section className="space-y-3">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Identity</h2>
-
             <Field label="Name *">
               <input value={form.name} onChange={set("name")}
                 placeholder="e.g. Customer Support Bot" className="input" />
@@ -241,7 +269,6 @@ export default function Editor() {
             <p className="text-sm text-red-500">{String(saveMutation.error)}</p>
           )}
 
-          {/* Agent meta */}
           {!isNew && agent && (
             <>
               <hr className="border-gray-100" />
@@ -258,7 +285,7 @@ export default function Editor() {
           )}
         </aside>
 
-        {/* ── Right: tabbed KB + Chat ──────────────────────────────────── */}
+        {/* ── Right: tabbed KB + Chat + Feedback ──────────────────────────── */}
         <main className="flex-1 flex flex-col overflow-hidden">
 
           {/* Tab bar */}
@@ -268,14 +295,20 @@ export default function Editor() {
             </TabButton>
             <TabButton
               active={rightTab === "chat"}
-              onClick={() => { setRightTab("chat"); }}
+              onClick={() => setRightTab("chat")}
               disabled={isNew}
             >
-              Test Chat {isReady ? "●" : "○"}
+              Test Chat {isReady ? "●" : isIngesting ? "◌" : "○"}
+            </TabButton>
+            <TabButton
+              active={rightTab === "feedback"}
+              onClick={() => setRightTab("feedback")}
+              disabled={isNew}
+            >
+              Feedback
             </TabButton>
 
-            {/* Reload button shown only in chat tab */}
-            {rightTab === "chat" && isReady && (
+            {rightTab === "chat" && chatUrl && (
               <button
                 onClick={reloadChat}
                 title="Reload chat (start fresh conversation)"
@@ -297,12 +330,66 @@ export default function Editor() {
                 <>
                   <FileUpload agentId={id!} files={files} />
                   <IngestStatus agentId={id!} />
+
+                  {/* URL Sources */}
+                  <section className="space-y-3">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
+                      <Globe size={12} /> URL Sources
+                    </h3>
+                    {urls.length > 0 && (
+                      <ul className="space-y-1.5">
+                        {urls.map((u) => (
+                          <li key={u.id} className="flex items-center gap-2 text-sm bg-gray-50 rounded-lg px-3 py-2">
+                            <Link2 size={13} className="shrink-0 text-gray-400" />
+                            <div className="flex-1 min-w-0">
+                              <p className="truncate text-gray-800">{u.url}</p>
+                              {u.label && <p className="text-xs text-gray-400 truncate">{u.label}</p>}
+                            </div>
+                            <button
+                              onClick={() => deleteUrlMutation.mutate(u.id)}
+                              className="shrink-0 text-gray-300 hover:text-red-500 transition-colors"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div className="space-y-2">
+                      <input
+                        value={newUrl}
+                        onChange={(e) => setNewUrl(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && newUrl.trim() && addUrlMutation.mutate()}
+                        placeholder="https://docs.example.com/page"
+                        className="input text-sm"
+                      />
+                      <div className="flex gap-2">
+                        <input
+                          value={newUrlLabel}
+                          onChange={(e) => setNewUrlLabel(e.target.value)}
+                          placeholder="Label (optional)"
+                          className="input text-sm flex-1"
+                        />
+                        <button
+                          onClick={() => addUrlMutation.mutate()}
+                          disabled={!newUrl.trim() || addUrlMutation.isPending}
+                          className="shrink-0 flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 text-gray-700 text-sm px-3 py-2 rounded-lg transition-colors"
+                        >
+                          <Globe size={13} /> Add URL
+                        </button>
+                      </div>
+                      {addUrlMutation.isError && (
+                        <p className="text-xs text-red-500">{String(addUrlMutation.error)}</p>
+                      )}
+                    </div>
+                  </section>
+
                   <div className="flex gap-3">
                     <button
                       onClick={() => ingestMutation.mutate()}
                       disabled={
                         ingestMutation.isPending ||
-                        files.length === 0 ||
+                        (files.length === 0 && urls.length === 0) ||
                         status?.status === "ingesting"
                       }
                       className="flex items-center gap-2 bg-gray-800 hover:bg-gray-900 disabled:opacity-40 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
@@ -330,30 +417,102 @@ export default function Editor() {
           {/* ── Chat tab ──────────────────────────────────────────────── */}
           {rightTab === "chat" && (
             <div className="flex-1 flex flex-col overflow-hidden">
-              {!isReady || !chatUrl ? (
-                <div className="flex-1 flex flex-col items-center justify-center gap-4 text-gray-400">
-                  <div className="text-4xl">🤖</div>
-                  <p className="text-sm font-medium text-gray-500">Agent not ready yet</p>
-                  <p className="text-xs text-center max-w-xs">
-                    Upload knowledge files and click{" "}
-                    <strong>Build Knowledge Base</strong> to make the agent ready for testing.
-                  </p>
-                  <button
-                    onClick={() => setRightTab("kb")}
-                    className="text-xs text-brand-600 hover:underline"
-                  >
-                    Go to Knowledge Base →
-                  </button>
+              {!chatUrl ? (
+                <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
+                  Loading chat…
                 </div>
               ) : (
-                <iframe
-                  key={iframeKey}
-                  src={chatUrl}
-                  title={`Chat — ${agent?.name ?? "Agent"}`}
-                  className="flex-1 w-full border-0"
-                  allow="microphone"
-                  // Chainlit must allow iframe embedding — see note in README
-                />
+                <>
+                  {!isReady && (
+                    <div className="shrink-0 bg-amber-50 border-b border-amber-100 px-4 py-2 text-xs text-amber-700 flex items-center gap-2">
+                      <span>⚠</span>
+                      No knowledge base built yet — the agent will answer from its system prompt only.
+                      <button
+                        onClick={() => setRightTab("kb")}
+                        className="underline hover:no-underline"
+                      >
+                        Build KB →
+                      </button>
+                    </div>
+                  )}
+                  <iframe
+                    key={iframeKey}
+                    src={chatUrl}
+                    title={`Chat — ${agent?.name ?? "Agent"}`}
+                    className="flex-1 w-full border-0"
+                    allow="microphone"
+                  />
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── Feedback tab ──────────────────────────────────────────── */}
+          {rightTab === "feedback" && (
+            <div className="flex-1 overflow-y-auto p-6">
+              {!feedback ? (
+                <div className="text-center text-gray-400 py-12 text-sm">Loading feedback…</div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Summary counts */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-green-50 border border-green-100 rounded-xl p-4 flex items-center gap-3">
+                      <ThumbsUp size={20} className="text-green-500 shrink-0" />
+                      <div>
+                        <p className="text-2xl font-bold text-green-700">{feedback.thumbs_up}</p>
+                        <p className="text-xs text-green-600">Positive</p>
+                      </div>
+                    </div>
+                    <div className="bg-red-50 border border-red-100 rounded-xl p-4 flex items-center gap-3">
+                      <ThumbsDown size={20} className="text-red-400 shrink-0" />
+                      <div>
+                        <p className="text-2xl font-bold text-red-600">{feedback.thumbs_down}</p>
+                        <p className="text-xs text-red-500">Negative</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Recent rated exchanges */}
+                  {feedback.recent.length === 0 ? (
+                    <p className="text-sm text-gray-400 text-center py-8">
+                      No rated exchanges yet — test the agent and rate some responses.
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                        Recent Rated Exchanges
+                      </h3>
+                      {feedback.recent.map((entry, i) => (
+                        <div key={i} className="bg-white border border-gray-100 rounded-xl p-4 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                              entry.rating === "up"
+                                ? "bg-green-100 text-green-700"
+                                : "bg-red-100 text-red-600"
+                            }`}>
+                              {entry.rating === "up" ? "👍 Positive" : "👎 Negative"}
+                            </span>
+                            <span className="text-xs text-gray-400">
+                              {new Date(entry.ts * 1000).toLocaleString()}
+                            </span>
+                          </div>
+                          {entry.question && (
+                            <div>
+                              <p className="text-xs font-medium text-gray-500 mb-0.5">Question</p>
+                              <p className="text-sm text-gray-800 line-clamp-2">{entry.question}</p>
+                            </div>
+                          )}
+                          {entry.response && (
+                            <div>
+                              <p className="text-xs font-medium text-gray-500 mb-0.5">Response</p>
+                              <p className="text-sm text-gray-600 line-clamp-3">{entry.response}</p>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}

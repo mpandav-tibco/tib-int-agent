@@ -29,3 +29,25 @@ export interface IngestStatus {
   started_at: string | null;
   finished_at: string | null;
 }
+
+export interface AgentUrl {
+  id: string;
+  agent_id: string;
+  url: string;
+  label: string;
+  added_at: string;
+}
+
+export interface FeedbackEntry {
+  ts: number;
+  rating: "up" | "down";
+  question: string;
+  response: string;
+}
+
+export interface AgentFeedback {
+  agent_id: string;
+  thumbs_up: number;
+  thumbs_down: number;
+  recent: FeedbackEntry[];
+}

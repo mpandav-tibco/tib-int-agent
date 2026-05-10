@@ -85,13 +85,14 @@ def _drop_weaviate_collection(collection_name: str) -> None:
 
 
 def _run_ingest(agent_id: str, collection_name: str, files_dir: Path) -> None:
-    """Background task: ingest all files in files_dir into the agent's Weaviate collection."""
+    """Background task: ingest all files + URLs for the agent's Weaviate collection."""
     _ingest_status[agent_id] = {"status": "ingesting", "chunks": 0, "error": None,
                                  "started_at": datetime.now(timezone.utc).isoformat()}
     store.set_status(agent_id, "ingesting")
     try:
         from tibco_agent.ingest.pipeline import IngestionPipeline
         from tibco_agent.ingest.sources.file_source import FileSource
+        from tibco_agent.ingest.sources.web_source import WebSource
         from tibco_agent.config import settings
 
         pipeline = IngestionPipeline(
@@ -100,7 +101,17 @@ def _run_ingest(agent_id: str, collection_name: str, files_dir: Path) -> None:
             collection_name=collection_name,
             weaviate_url=settings.weaviate_url,
         )
-        pipeline.add_source(FileSource(path=str(files_dir), glob_pattern="**/*"))
+
+        # Files
+        has_files = files_dir.exists() and any(files_dir.iterdir())
+        if has_files:
+            pipeline.add_source(FileSource(path=str(files_dir), glob_pattern="**/*"))
+
+        # URLs stored in the agent_urls table
+        urls = store.get_urls_for_agent(agent_id)
+        if urls:
+            pipeline.add_source(WebSource(urls=urls, name=f"agent-{agent_id[:8]}-web"))
+
         chunks = pipeline.run(reset=True)
 
         _ingest_status[agent_id].update({"status": "ready", "chunks": chunks,
@@ -211,8 +222,10 @@ def delete_file(agent_id: str, filename: str):
 def trigger_ingest(agent_id: str, background_tasks: BackgroundTasks):
     agent = _require_agent(agent_id)
     files_dir = _FILES_ROOT / agent_id
-    if not files_dir.exists() or not any(files_dir.iterdir()):
-        raise HTTPException(status_code=400, detail="No files uploaded yet — upload files first")
+    has_files = files_dir.exists() and any(files_dir.iterdir())
+    has_urls = bool(store.get_urls_for_agent(agent_id))
+    if not has_files and not has_urls:
+        raise HTTPException(status_code=400, detail="No files or URLs added yet — add some knowledge sources first")
     if _ingest_status.get(agent_id, {}).get("status") == "ingesting":
         raise HTTPException(status_code=409, detail="Ingestion already in progress")
     background_tasks.add_task(_run_ingest, agent_id, agent.collection_name, files_dir)
@@ -239,3 +252,58 @@ def get_status(agent_id: str):
 def get_chat_url(agent_id: str):
     _require_agent(agent_id)
     return {"url": f"{_CHAINLIT_URL}?agent_id={agent_id}"}
+
+
+# ── URL knowledge sources ─────────────────────────────────────────────────────
+
+class AddUrlRequest(BaseModel):
+    url: str
+    label: str = ""
+
+
+@router.get("/{agent_id}/urls")
+def list_urls(agent_id: str):
+    _require_agent(agent_id)
+    return store.list_urls(agent_id)
+
+
+@router.post("/{agent_id}/urls", status_code=201)
+def add_url(agent_id: str, req: AddUrlRequest):
+    _require_agent(agent_id)
+    url = req.url.strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
+    return store.add_url(agent_id, url, req.label)
+
+
+@router.delete("/{agent_id}/urls/{url_id}", status_code=204)
+def delete_url(agent_id: str, url_id: str):
+    _require_agent(agent_id)
+    if not store.delete_url(url_id):
+        raise HTTPException(status_code=404, detail=f"URL '{url_id}' not found")
+
+
+# ── Feedback ──────────────────────────────────────────────────────────────────
+
+@router.get("/{agent_id}/feedback")
+def get_feedback(agent_id: str):
+    _require_agent(agent_id)
+    from tibco_agent.feedback import summary as _fb_summary, _get_conn as _fb_conn
+    counts = _fb_summary(agent_id=agent_id)
+    # Fetch last 20 rated exchanges for this agent
+    con = _fb_conn()
+    rows = con.execute(
+        "SELECT ts, rating, question, response FROM feedback"
+        " WHERE agent_id=? ORDER BY ts DESC LIMIT 20",
+        (agent_id,),
+    ).fetchall()
+    recent = [
+        {"ts": r[0], "rating": r[1], "question": r[2] or "", "response": r[3] or ""}
+        for r in rows
+    ]
+    return {
+        "agent_id": agent_id,
+        "thumbs_up": counts.get("up", 0),
+        "thumbs_down": counts.get("down", 0),
+        "recent": recent,
+    }

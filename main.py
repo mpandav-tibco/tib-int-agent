@@ -14,21 +14,44 @@ Then start Chainlit separately:
 from __future__ import annotations
 
 import logging
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from agent_store.router import router as agents_router
+from agent_store.store import store
 
 log = logging.getLogger(__name__)
+
+# ── Optional API key auth ─────────────────────────────────────────────────────
+# Set FORGE_API_KEY env var to enable authentication. Leave unset for open dev mode.
+_API_KEY = os.environ.get("FORGE_API_KEY", "").strip()
+
+
+# ── Startup / shutdown lifespan ───────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Reset any agents stuck in 'ingesting' from a previous server run.
+    stale = store.list_ingesting()
+    for agent in stale:
+        store.set_status(agent.id, "draft")
+        log.warning("Reset stale ingesting agent %s (%s) → draft", agent.id, agent.name)
+    if stale:
+        log.info("Reset %d stale ingesting agent(s) to draft on startup", len(stale))
+    yield
+
 
 app = FastAPI(
     title="AgentForge",
     description="Build, configure, and deploy AI agents backed by a Weaviate knowledge base.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # Allow the Vite dev server (localhost:5173) to hit the API during development.
@@ -38,6 +61,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── API key middleware (no-op when FORGE_API_KEY is not set) ──────────────────
+
+@app.middleware("http")
+async def api_key_guard(request: Request, call_next):
+    if _API_KEY and request.url.path.startswith("/api/"):
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {_API_KEY}":
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    return await call_next(request)
 
 # ── API routes ────────────────────────────────────────────────────────────────
 
