@@ -1,7 +1,7 @@
-import { ExternalLink, Pencil, Trash2 } from "lucide-react";
+import { Copy, ExternalLink, Pencil, Trash2 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { deleteAgent, getChatUrl } from "../api";
+import { cloneAgent, deleteAgent, getChatUrl } from "../api";
 import type { Agent } from "../types";
 
 const STATUS_STYLES: Record<string, string> = {
@@ -18,6 +18,14 @@ export default function AgentCard({ agent }: { agent: Agent }) {
   const removeMutation = useMutation({
     mutationFn: () => deleteAgent(agent.id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["agents"] }),
+  });
+
+  const cloneMutation = useMutation({
+    mutationFn: () => cloneAgent(agent.id),
+    onSuccess: (cloned) => {
+      qc.invalidateQueries({ queryKey: ["agents"] });
+      navigate(`/agents/${cloned.id}`);
+    },
   });
 
   const handleChat = async () => {
@@ -49,6 +57,12 @@ export default function AgentCard({ agent }: { agent: Agent }) {
         {agent.llm_provider} · {agent.llm_model || "default model"}
       </div>
 
+      {agent.last_ingest_at && (
+        <div className="text-xs text-gray-400">
+          Last ingested: {new Date(agent.last_ingest_at).toLocaleString()} · {agent.last_ingest_chunks} chunks
+        </div>
+      )}
+
       <div className="flex gap-2 mt-auto pt-2 border-t border-gray-100">
         <button
           onClick={() => navigate(`/agents/${agent.id}`)}
@@ -64,7 +78,16 @@ export default function AgentCard({ agent }: { agent: Agent }) {
             disabled:opacity-40 disabled:cursor-not-allowed
             enabled:text-brand-600 enabled:hover:bg-brand-50 enabled:hover:text-brand-700"
         >
-          <ExternalLink size={14} /> Chat to Test
+          <ExternalLink size={14} /> Chat
+        </button>
+
+        <button
+          onClick={() => cloneMutation.mutate()}
+          disabled={cloneMutation.isPending}
+          title="Duplicate this agent"
+          className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800 px-2 py-1 rounded hover:bg-gray-100 transition-colors disabled:opacity-40"
+        >
+          <Copy size={14} /> {cloneMutation.isPending ? "…" : "Clone"}
         </button>
 
         <button

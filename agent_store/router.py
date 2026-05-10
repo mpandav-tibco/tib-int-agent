@@ -114,9 +114,10 @@ def _run_ingest(agent_id: str, collection_name: str, files_dir: Path) -> None:
 
         chunks = pipeline.run(reset=True)
 
+        finished_at = datetime.now(timezone.utc).isoformat()
         _ingest_status[agent_id].update({"status": "ready", "chunks": chunks,
-                                          "finished_at": datetime.now(timezone.utc).isoformat()})
-        store.set_status(agent_id, "ready")
+                                          "finished_at": finished_at})
+        store.record_ingest(agent_id, chunks)  # persists status=ready + chunks + timestamp
         log.info("Ingest complete for agent %s: %d chunks in %s", agent_id, chunks, collection_name)
     except Exception as exc:
         log.error("Ingest failed for agent %s: %s", agent_id, exc)
@@ -161,6 +162,16 @@ def update_agent(agent_id: str, req: UpdateAgentRequest):
         raise HTTPException(status_code=400, detail="No fields to update")
     agent = store.update(agent_id, **updates)
     return agent.to_public_dict()
+
+
+@router.post("/{agent_id}/clone", status_code=201)
+def clone_agent(agent_id: str):
+    _require_agent(agent_id)
+    try:
+        cloned = store.clone(agent_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+    return cloned.to_public_dict()
 
 
 @router.delete("/{agent_id}", status_code=204)
@@ -236,13 +247,15 @@ def trigger_ingest(agent_id: str, background_tasks: BackgroundTasks):
 def get_status(agent_id: str):
     agent = _require_agent(agent_id)
     ingest = _ingest_status.get(agent_id, {})
+    # Fall back to DB-persisted values when the in-memory dict has no entry
+    # (e.g. after a server restart where the agent was previously ingested)
     return {
         "agent_id": agent_id,
         "status": ingest.get("status", agent.status),
-        "chunks": ingest.get("chunks", 0),
+        "chunks": ingest.get("chunks", agent.last_ingest_chunks),
         "error": ingest.get("error"),
         "started_at": ingest.get("started_at"),
-        "finished_at": ingest.get("finished_at"),
+        "finished_at": ingest.get("finished_at", agent.last_ingest_at or None),
     }
 
 
@@ -288,19 +301,9 @@ def delete_url(agent_id: str, url_id: str):
 @router.get("/{agent_id}/feedback")
 def get_feedback(agent_id: str):
     _require_agent(agent_id)
-    from tibco_agent.feedback import summary as _fb_summary, _get_conn as _fb_conn
+    from tibco_agent.feedback import summary as _fb_summary, get_recent as _fb_recent
     counts = _fb_summary(agent_id=agent_id)
-    # Fetch last 20 rated exchanges for this agent
-    con = _fb_conn()
-    rows = con.execute(
-        "SELECT ts, rating, question, response FROM feedback"
-        " WHERE agent_id=? ORDER BY ts DESC LIMIT 20",
-        (agent_id,),
-    ).fetchall()
-    recent = [
-        {"ts": r[0], "rating": r[1], "question": r[2] or "", "response": r[3] or ""}
-        for r in rows
-    ]
+    recent = _fb_recent(agent_id=agent_id, limit=20)
     return {
         "agent_id": agent_id,
         "thumbs_up": counts.get("up", 0),

@@ -74,3 +74,24 @@ def summary(agent_id: str = "") -> dict:
                 "SELECT rating, COUNT(*) FROM feedback GROUP BY rating"
             ).fetchall()
     return {r: c for r, c in rows}
+
+
+def get_recent(agent_id: str = "", limit: int = 20) -> list[dict]:
+    """Return the most recent rated exchanges, newest first."""
+    con = _get_conn()
+    if agent_id:
+        rows = con.execute(
+            "SELECT ts, rating, question, response FROM feedback"
+            " WHERE agent_id=? ORDER BY ts DESC LIMIT ?",
+            (agent_id, limit),
+        ).fetchall()
+    else:
+        rows = con.execute(
+            "SELECT ts, rating, question, response FROM feedback"
+            " ORDER BY ts DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [
+        {"ts": r[0], "rating": r[1], "question": r[2] or "", "response": r[3] or ""}
+        for r in rows
+    ]

@@ -19,7 +19,9 @@ class Agent:
     embed_model: str          # e.g. "nomic-embed-text" — falls back to global default
     created_at: str           # ISO-8601 timestamp
     updated_at: str           # ISO-8601 timestamp
-    status: str               # draft | ingesting | ready
+    status: str               # draft | ingesting | ready | error
+    last_ingest_chunks: int = 0    # chunk count from last successful ingest
+    last_ingest_at: str = ""       # ISO-8601 timestamp of last successful ingest
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -39,6 +41,8 @@ class Agent:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "status": self.status,
+            "last_ingest_chunks": self.last_ingest_chunks,
+            "last_ingest_at": self.last_ingest_at,
         }
 
     def to_public_dict(self) -> dict:

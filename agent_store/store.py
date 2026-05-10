@@ -17,20 +17,22 @@ _DB_PATH = Path(
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS agents (
-    id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL,
-    title           TEXT NOT NULL DEFAULT '',
-    description     TEXT NOT NULL DEFAULT '',
-    system_prompt   TEXT NOT NULL DEFAULT '',
-    collection_name TEXT NOT NULL,
-    llm_provider    TEXT NOT NULL DEFAULT 'ollama',
-    llm_model       TEXT NOT NULL DEFAULT '',
-    llm_api_key     TEXT NOT NULL DEFAULT '',
-    llm_api_base    TEXT NOT NULL DEFAULT '',
-    embed_model     TEXT NOT NULL DEFAULT '',
-    created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'draft'
+    id                  TEXT PRIMARY KEY,
+    name                TEXT NOT NULL,
+    title               TEXT NOT NULL DEFAULT '',
+    description         TEXT NOT NULL DEFAULT '',
+    system_prompt       TEXT NOT NULL DEFAULT '',
+    collection_name     TEXT NOT NULL,
+    llm_provider        TEXT NOT NULL DEFAULT 'ollama',
+    llm_model           TEXT NOT NULL DEFAULT '',
+    llm_api_key         TEXT NOT NULL DEFAULT '',
+    llm_api_base        TEXT NOT NULL DEFAULT '',
+    embed_model         TEXT NOT NULL DEFAULT '',
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'draft',
+    last_ingest_chunks  INTEGER NOT NULL DEFAULT 0,
+    last_ingest_at      TEXT NOT NULL DEFAULT ''
 )
 """
 
@@ -48,7 +50,7 @@ CREATE TABLE IF NOT EXISTS agent_urls (
 _COLUMNS = [
     "id", "name", "title", "description", "system_prompt", "collection_name",
     "llm_provider", "llm_model", "llm_api_key", "llm_api_base", "embed_model",
-    "created_at", "updated_at", "status",
+    "created_at", "updated_at", "status", "last_ingest_chunks", "last_ingest_at",
 ]
 
 
@@ -78,6 +80,14 @@ class AgentStore:
                 self._conn.execute("PRAGMA foreign_keys=ON")
                 self._conn.execute(_CREATE_TABLE)
                 self._conn.execute(_CREATE_URLS_TABLE)
+                # Migrate existing DBs that predate last_ingest_* columns
+                for col, default in [("last_ingest_chunks", "0"), ("last_ingest_at", "''")]:
+                    try:
+                        self._conn.execute(
+                            f"ALTER TABLE agents ADD COLUMN {col} TEXT NOT NULL DEFAULT {default}"
+                        )
+                    except sqlite3.OperationalError:
+                        pass  # column already exists
                 self._conn.commit()
             return self._conn
 
@@ -144,6 +154,31 @@ class AgentStore:
                 "UPDATE agents SET status=?, updated_at=? WHERE id=?",
                 (status, _now(), agent_id),
             )
+
+    def record_ingest(self, agent_id: str, chunks: int) -> None:
+        """Persist ingest results so status survives server restarts."""
+        with self._get_conn() as con:
+            con.execute(
+                "UPDATE agents SET status='ready', last_ingest_chunks=?, last_ingest_at=?, updated_at=? WHERE id=?",
+                (chunks, _now(), _now(), agent_id),
+            )
+
+    def clone(self, agent_id: str) -> Agent:
+        """Create a new agent with the same config as agent_id, status reset to draft."""
+        source = self.get(agent_id)
+        if source is None:
+            raise KeyError(agent_id)
+        return self.create(
+            name=f"Copy of {source.name}",
+            title=source.title,
+            description=source.description,
+            system_prompt=source.system_prompt,
+            llm_provider=source.llm_provider,
+            llm_model=source.llm_model,
+            llm_api_key=source.llm_api_key,
+            llm_api_base=source.llm_api_base,
+            embed_model=source.embed_model,
+        )
 
     def delete(self, agent_id: str) -> None:
         with self._get_conn() as con:

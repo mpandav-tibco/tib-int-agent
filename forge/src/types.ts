@@ -13,6 +13,8 @@ export interface Agent {
   created_at: string;
   updated_at: string;
   status: "draft" | "ingesting" | "ready" | "error";
+  last_ingest_chunks: number;
+  last_ingest_at: string;
 }
 
 export interface AgentFile {

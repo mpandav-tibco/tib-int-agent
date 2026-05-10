@@ -55,6 +55,9 @@ export const deleteAgent = (id: string): Promise<void> =>
     if (!r.ok && r.status !== 204) throw new Error(`${r.status}: ${r.statusText}`);
   });
 
+export const cloneAgent = (id: string): Promise<Agent> =>
+  mutate(`${BASE}/${id}/clone`, "POST").then(json<Agent>);
+
 export const listFiles = (id: string): Promise<AgentFile[]> =>
   get(`${BASE}/${id}/files`).then(json<AgentFile[]>);
 
