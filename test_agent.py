@@ -35,10 +35,10 @@ if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
     print("Loading agent (first load is slower — sets up LLM + RAG)...")
-    from tibco_agent.agent.core import build_agent, ask
+    from tibco_agent.agent.core import configure_llm, ask
 
-    agent = build_agent()
-    print("Agent ready.\n")
+    configure_llm()
+    print("LLM ready.\n")
 
     TESTS = [
         {
@@ -81,7 +81,7 @@ if __name__ == "__main__":
         print("=" * 60)
         print(f"Q: {t['question'][:80]}...")
         print("\nA:")
-        response = ask(agent, t["question"], t["flogo"], t["log"])
+        response = ask(t["question"], t["flogo"], t["log"])
         print(response[:1500])
         print("..." if len(response) > 1500 else "")
 

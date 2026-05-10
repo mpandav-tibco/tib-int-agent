@@ -270,56 +270,7 @@ async def on_settings_update(new_settings: dict) -> None:
 
 # ── Streaming LLM ─────────────────────────────────────────────────────────────
 
-class _ThinkFilter:
-    """Incremental O(n) filter for <think>...</think> blocks (deepseek-r1 reasoning models).
-
-    The naive approach calls _clean_response(accumulated) on every token — O(n²) in
-    response length for long reasoning chains. This class maintains a state machine
-    that processes each new token in O(len(token)) instead.
-    """
-    _OPEN  = "<think>"
-    _CLOSE = "</think>"
-
-    def __init__(self) -> None:
-        self._in_think = False
-        self._buf = ""  # lookahead buffer for partial tags that span token boundaries
-
-    def feed(self, token: str) -> str:
-        """Feed one token; return the clean output delta (empty while inside <think>)."""
-        out: list[str] = []
-        data = self._buf + token
-        self._buf = ""
-        while data:
-            if self._in_think:
-                end = data.lower().find(self._CLOSE)
-                if end == -1:
-                    keep = len(self._CLOSE) - 1
-                    self._buf = data[-keep:] if len(data) >= keep else data
-                    break
-                data = data[end + len(self._CLOSE):]
-                self._in_think = False
-            else:
-                start = data.lower().find(self._OPEN)
-                if start == -1:
-                    keep = len(self._OPEN) - 1
-                    if len(data) >= keep:
-                        out.append(data[:-keep])
-                        self._buf = data[-keep:]
-                    else:
-                        self._buf = data
-                    break
-                out.append(data[:start])
-                data = data[start + len(self._OPEN):]
-                self._in_think = True
-        return "".join(out)
-
-    def finalize(self) -> str:
-        """Flush any remaining safe buffered content (partial open-tag lookahead)."""
-        if self._in_think:
-            return ""
-        result = self._buf
-        self._buf = ""
-        return result
+from tibco_agent.streaming import ThinkFilter as _ThinkFilter  # noqa: E402
 
 
 async def _stream_into(prompt: str, out_msg: cl.Message) -> tuple[str, bool]:
