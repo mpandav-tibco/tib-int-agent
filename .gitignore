@@ -19,3 +19,5 @@ data/knowledge/
 .DS_Store
 Thumbs.db
 data/feedback.db
+builder/node_modules
+builder/dist
