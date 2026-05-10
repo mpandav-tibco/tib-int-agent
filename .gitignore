@@ -25,3 +25,4 @@ builder/dist
 # React SPA build artifacts
 forge/node_modules/
 forge/dist/
+forge/*.tsbuildinfo
