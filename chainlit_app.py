@@ -25,6 +25,8 @@ from tibco_agent.report.generator import to_html, to_pdf
 
 log = logging.getLogger(__name__)
 
+_SESSION_RATE_LIMIT = 50  # warn (but don't block) above this many requests per session
+
 
 # ── Optional password auth (activate by setting CHAINLIT_AUTH_SECRET env var) ─
 
@@ -183,7 +185,8 @@ async def on_chat_start() -> None:
     cl.user_session.set("zip_markdown", "")
     cl.user_session.set("last_question", "")
     cl.user_session.set("last_response", "")
-    cl.user_session.set("tmp_files", [])  # track temp paths for cleanup
+    cl.user_session.set("tmp_files", [])   # track temp paths for cleanup
+    cl.user_session.set("req_count", 0)   # per-session request counter for rate limiting
 
     if degraded:
         await cl.Message(
@@ -648,6 +651,18 @@ async def on_message(message: cl.Message) -> None:
     # Inject project ZIP context when no individual files are loaded
     if zip_markdown and not (flogo_content or bw_content or log_content):
         question = question + "\n\n" + zip_markdown
+
+    # ── Soft rate limit ───────────────────────────────────────────────────────
+    req_count = (cl.user_session.get("req_count") or 0) + 1
+    cl.user_session.set("req_count", req_count)
+    if req_count > _SESSION_RATE_LIMIT:
+        await cl.Message(
+            content=(
+                f"_Note: this session has sent {req_count} requests. "
+                "For best results, consider starting a new chat to keep context focused._"
+            ),
+            author="TARA",
+        ).send()
 
     loop = asyncio.get_event_loop()
     response = ""
