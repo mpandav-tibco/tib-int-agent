@@ -269,12 +269,18 @@ async def on_settings_update(new_settings: dict) -> None:
 
 # ── Streaming LLM ─────────────────────────────────────────────────────────────
 
-async def _stream_into(prompt: str, out_msg: cl.Message) -> str:
+async def _stream_into(prompt: str, out_msg: cl.Message) -> tuple[str, bool]:
     """
     Stream LLM response token-by-token into out_msg.
     Handles <think>...</think> blocks (deepseek-r1) by filtering them silently.
     Falls back to a blocking call if the provider does not support streaming.
-    Returns the final cleaned response string.
+
+    Returns (response_text, was_streamed).
+    - was_streamed=True  → content already rendered in browser via stream_token events;
+                           caller must NOT call out_msg.update() or the full text will
+                           be sent again, producing a double render in Chainlit 2.x.
+    - was_streamed=False → content set on out_msg.content; caller must call update()
+                           to push it to the browser.
     """
     from tibco_agent.agent.core import configure_llm
     from llama_index.core import Settings as LISettings
@@ -312,9 +318,7 @@ async def _stream_into(prompt: str, out_msg: cl.Message) -> str:
         if remaining:
             await out_msg.stream_token(remaining)
 
-        # Do NOT call out_msg.update() here — caller does one final update
-        # so Chainlit only renders the full content once (prevents duplication).
-        return final_cleaned
+        return final_cleaned, True  # was_streamed — caller must NOT call update()
 
     except Exception:
         # Provider does not support streaming — fall back to blocking call
@@ -326,8 +330,7 @@ async def _stream_into(prompt: str, out_msg: cl.Message) -> str:
             result = await loop.run_in_executor(None, lambda: str(lm.complete(prompt)))
         cleaned = _clean_response(result)
         out_msg.content = cleaned
-        # Caller handles the final update
-        return cleaned
+        return cleaned, False  # not streamed — caller must call update()
 
 
 # ── Feedback & export actions ─────────────────────────────────────────────────
@@ -696,16 +699,20 @@ async def on_message(message: cl.Message) -> None:
         )
 
         # ── Clear the progress text and stream the actual response ────────────
+        # Actions are attached NOW (before streaming) so we never need to call
+        # update() after streaming completes. Calling update() after stream_token()
+        # re-sends out_msg.content (accumulated by stream_token as a side-effect),
+        # which causes Chainlit 2.x to render the full response a second time.
         out_msg.content = ""
-        await out_msg.update()
-        response = await _stream_into(prompt, out_msg)
-
-        # Attach actions without re-setting content.
-        # stream_token() already rendered the full response incrementally;
-        # re-assigning content before update() causes Chainlit 2.x to
-        # append the full text again, making the response appear twice.
         out_msg.actions = _make_actions()
         await out_msg.update()
+
+        response, was_streamed = await _stream_into(prompt, out_msg)
+
+        if not was_streamed:
+            # Fallback (blocking) path: content was set directly on out_msg.content;
+            # push it to the browser. Safe because no stream_token accumulation occurred.
+            await out_msg.update()
 
     except Exception as exc:
         session_cfg = cl.user_session.get("session_cfg") or _cfg

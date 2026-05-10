@@ -4,6 +4,7 @@ llama-index-llms-openai>=0.1.0
 llama-index-llms-openai-like>=0.1.0
 llama-index-llms-anthropic>=0.1.0
 llama-index-embeddings-ollama>=0.3.0
+llama-index-embeddings-openai>=0.1.0
 weaviate-client>=4.0.0
 pypdf>=3.17.0
 markdown>=3.5.0
