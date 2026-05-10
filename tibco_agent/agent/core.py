@@ -157,13 +157,31 @@ def _make_llm(cfg: AppSettings | None = None):
     )
 
 
-def configure_llm(cfg: AppSettings | None = None) -> None:
-    cfg = cfg or _default_settings
-    Settings.llm = _make_llm(cfg)
-    Settings.embed_model = OllamaEmbedding(
+def _make_embed_model(cfg: AppSettings):
+    """Return the appropriate embedding model for the configured provider."""
+    if cfg.llm_provider == "openai":
+        from llama_index.embeddings.openai import OpenAIEmbedding
+        log.info("Using OpenAIEmbedding (text-embedding-3-small) for provider=openai")
+        return OpenAIEmbedding(
+            model="text-embedding-3-small",
+            api_key=cfg.llm_api_key,
+        )
+    if cfg.llm_provider not in ("ollama",):
+        log.warning(
+            "Provider '%s' has no native embedding model — falling back to Ollama at %s. "
+            "Ensure Ollama is running with: ollama pull %s",
+            cfg.llm_provider, cfg.ollama_base_url, cfg.embed_model,
+        )
+    return OllamaEmbedding(
         model_name=cfg.embed_model,
         base_url=cfg.ollama_base_url,
     )
+
+
+def configure_llm(cfg: AppSettings | None = None) -> None:
+    cfg = cfg or _default_settings
+    Settings.llm = _make_llm(cfg)
+    Settings.embed_model = _make_embed_model(cfg)
 
 
 def build_agent(registry: ToolRegistry | None = None, cfg: AppSettings | None = None) -> ReActAgent:
@@ -188,7 +206,7 @@ def build_agent(registry: ToolRegistry | None = None, cfg: AppSettings | None = 
     )
 
 
-_HISTORY_CHAR_LIMIT = 2000  # ~500 tokens — keeps prompt within budget
+_HISTORY_CHAR_LIMIT = 6000  # ~1500 tokens — covers ~3 full diagnostic turns
 
 
 def _trim_history(history: list[dict]) -> list[dict]:
