@@ -676,8 +676,10 @@ async def on_message(message: cl.Message) -> None:
         await out_msg.update()
         response = await _stream_into(prompt, out_msg)
 
-        # Single final update: set content + actions together to avoid double-render.
-        out_msg.content = response
+        # Attach actions without re-setting content.
+        # stream_token() already rendered the full response incrementally;
+        # re-assigning content before update() causes Chainlit 2.x to
+        # append the full text again, making the response appear twice.
         out_msg.actions = _make_actions()
         await out_msg.update()
 
