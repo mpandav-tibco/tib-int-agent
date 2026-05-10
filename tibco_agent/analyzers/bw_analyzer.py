@@ -9,8 +9,7 @@ from .bw_rules import (
     BWMissingRetryRule, BWSelectStarRule, BWLargeProcessRule,
     BWLocalhostUrlRule, BWMissingSubstVarRule,
     BWFaultHandlerPresentRule,
-    find_by_local, local_tag, text_of,
-    _FAULT_HANDLER_TAGS, _HTTP_ACTIVITY_TAGS,
+    find_by_local, local_tag, _FAULT_HANDLER_TAGS, _HTTP_ACTIVITY_TAGS,
 )
 
 # Tags that represent "leaf" activities (not structural containers)

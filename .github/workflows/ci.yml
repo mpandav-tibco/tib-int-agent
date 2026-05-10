@@ -7,7 +7,8 @@ on:
     branches: ["**"]
 
 jobs:
-  test:
+  # ── Python: analyzers, agent_store, and lint ─────────────────────────────────
+  python:
     runs-on: ubuntu-latest
 
     steps:
@@ -20,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run analyzer unit tests
+      - name: Run analyzer + agent_store unit tests
         run: pytest tests/ test_analyzers.py -v -k "not weaviate and not rag"
         env:
           RERANKER_ENABLED: "false"
@@ -28,4 +29,25 @@ jobs:
       - name: Lint with ruff
         run: |
           pip install ruff
-          ruff check . --select E,F,W --ignore E501
+          ruff check . --select E,F,W --ignore E501 --exclude .venv
+
+  # ── React SPA: TypeScript type-check + production build ──────────────────────
+  forge:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: forge/package-lock.json
+
+      - name: Install forge dependencies
+        run: npm ci
+        working-directory: forge
+
+      - name: TypeScript type-check + Vite build
+        run: npm run build
+        working-directory: forge

@@ -5,7 +5,6 @@ Tests do NOT require Weaviate or Ollama.
 """
 from __future__ import annotations
 
-import pytest
 
 from tibco_agent.analyzers.bw_analyzer import BWAnalyzer
 from .fixtures import make_bw_process

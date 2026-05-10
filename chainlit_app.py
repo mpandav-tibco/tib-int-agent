@@ -313,8 +313,18 @@ async def on_chat_start() -> None:
 
 @cl.on_settings_update
 async def on_settings_update(new_settings: dict) -> None:
+    agent_config = cl.user_session.get("agent_config")
+    if agent_config and agent_config.llm_provider:
+        await cl.Message(
+            content=(
+                f"**Settings ignored** — this session is locked to the **{agent_config.name}** agent "
+                f"(`{agent_config.llm_provider}` / `{agent_config.llm_model or 'default'}`). "
+                "Settings panel changes have no effect here. "
+                "Open a standalone chat tab to adjust the global defaults."
+            )
+        ).send()
+        return
     try:
-        from tibco_agent.config import Settings as AppSettings
         base = cl.user_session.get("session_cfg") or _cfg
         session_cfg = dataclasses.replace(
             base,
@@ -371,7 +381,7 @@ async def _stream_into(
     - was_streamed=False → content set on out_msg.content; caller must call update().
     """
     from llama_index.core import Settings as LISettings
-    from tibco_agent.agent.core import _SYSTEM_PROMPT, _clean_response as _cr
+    from tibco_agent.agent.core import _SYSTEM_PROMPT
 
     loop = asyncio.get_event_loop()
     session_cfg = cl.user_session.get("session_cfg")
@@ -661,11 +671,16 @@ async def _analyze_zip(zip_bytes: bytes, filename: str) -> None:
             None, lambda: analyze_zip(zip_bytes, zip_name=filename)
         )
         parts_summary = []
-        if result.flogo_reports: parts_summary.append(f"{len(result.flogo_reports)} Flogo")
-        if result.bw_reports:    parts_summary.append(f"{len(result.bw_reports)} BW")
-        if result.ems_reports:   parts_summary.append(f"{len(result.ems_reports)} EMS")
-        if result.kube_reports:  parts_summary.append(f"{len(result.kube_reports)} K8s")
-        if result.log_reports:   parts_summary.append(f"{len(result.log_reports)} log")
+        if result.flogo_reports:
+            parts_summary.append(f"{len(result.flogo_reports)} Flogo")
+        if result.bw_reports:
+            parts_summary.append(f"{len(result.bw_reports)} BW")
+        if result.ems_reports:
+            parts_summary.append(f"{len(result.ems_reports)} EMS")
+        if result.kube_reports:
+            parts_summary.append(f"{len(result.kube_reports)} K8s")
+        if result.log_reports:
+            parts_summary.append(f"{len(result.log_reports)} log")
         step.output = (
             f"{', '.join(parts_summary) or 'no supported files'} — "
             f"{result.total_errors} error(s), {result.total_warnings} warning(s)"

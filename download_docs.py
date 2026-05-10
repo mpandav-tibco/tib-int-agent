@@ -89,7 +89,7 @@ def main():
 
     print(f"\n{'='*50}")
     print(f"Total: {total} PDFs downloaded to {BASE_DIR}")
-    print(f"Run 'python ingest.py' to build the knowledge base.")
+    print("Run 'python ingest.py' to build the knowledge base.")
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ Run via chainlit UI by uploading a .conf file, or programmatically:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .base import AnalysisReport, Analyzer, Finding, Rule, Severity
 

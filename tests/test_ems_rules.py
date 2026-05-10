@@ -5,7 +5,6 @@ Tests do NOT require Weaviate, Ollama, or a live EMS server.
 """
 from __future__ import annotations
 
-import pytest
 
 from tibco_agent.analyzers.ems_analyzer import EMSAnalyzer
 

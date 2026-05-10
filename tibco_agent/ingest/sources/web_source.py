@@ -36,7 +36,6 @@ class WebSource(KnowledgeSource):
     def load(self) -> list[RawDocument]:
         try:
             import requests
-            from bs4 import BeautifulSoup
         except ImportError:
             print("  [WARN] 'requests' or 'beautifulsoup4' not installed. Skipping web source.")
             return []

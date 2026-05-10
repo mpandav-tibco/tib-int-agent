@@ -112,7 +112,7 @@ def to_pdf(report: AnalysisReport) -> bytes:
     LBLUE = colors.HexColor("#0057a8")
     RED   = colors.HexColor("#c0392b")
     ORG   = colors.HexColor("#e67e22")
-    GRN   = colors.HexColor("#27ae60")
+    GRN   = colors.HexColor("#27ae60")  # noqa: F841 — reserved for future use in report
     LGREY = colors.HexColor("#f4f4f8")
 
     def style(name, **kw) -> ParagraphStyle:

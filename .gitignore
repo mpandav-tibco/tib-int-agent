@@ -11,6 +11,8 @@ __pycache__/
 # Data — knowledge files are user-supplied; vector DB is rebuilt via ingest.py
 data/chroma_db/
 data/knowledge/
+data/agents.db
+data/agent_files/
 
 # Streamlit
 .streamlit/secrets.toml

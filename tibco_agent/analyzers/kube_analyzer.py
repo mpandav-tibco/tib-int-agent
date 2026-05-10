@@ -45,10 +45,6 @@ def _parse_containers(spec: dict) -> list[KubeContainer]:
     result: list[KubeContainer] = []
     for c in containers:
         image = str(c.get("image", ""))
-        # Tag is absent or literally "latest"
-        tag_match = _IMAGE_TAG_RE.search(image)
-        tag = tag_match.group(0)[1:] if tag_match else ""
-
         sec_ctx = c.get("securityContext", {}) or {}
         runs_as_root = not sec_ctx.get("runAsNonRoot", False)
 

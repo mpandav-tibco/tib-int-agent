@@ -106,16 +106,14 @@ make forge-dev     # starts Vite dev server
 ## Quick Start — Docker Compose (recommended for testing on another machine)
 
 Builds and starts Weaviate + API + Chainlit in one command. Ollama runs on the host.
+The Dockerfile uses a multi-stage build — Node.js builds the React SPA inside Docker, so no local `npm` install is required.
 
 ```bash
 # 1. Pull Ollama models on the host first
 ollama pull deepseek-r1:latest
 ollama pull nomic-embed-text
 
-# 2. Build React SPA
-cd forge && npm install && npm run build && cd ..
-
-# 3. Start everything
+# 2. Start everything (React SPA is built inside Docker automatically)
 docker compose up --build
 ```
 

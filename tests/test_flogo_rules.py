@@ -5,7 +5,6 @@ Tests do NOT require Weaviate or Ollama.
 """
 from __future__ import annotations
 
-import pytest
 
 from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
 from .fixtures import make_flogo, make_task

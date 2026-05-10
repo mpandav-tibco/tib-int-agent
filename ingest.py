@@ -14,10 +14,10 @@ import sys
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-from tibco_agent.config import settings
-from tibco_agent.ingest.pipeline import IngestionPipeline
-from tibco_agent.ingest.sources.file_source import FileSource
-from tibco_agent.ingest.sources.web_source import WebSource
+from tibco_agent.config import settings  # noqa: E402
+from tibco_agent.ingest.pipeline import IngestionPipeline  # noqa: E402
+from tibco_agent.ingest.sources.file_source import FileSource  # noqa: E402
+from tibco_agent.ingest.sources.web_source import WebSource  # noqa: E402
 
 # TIBCO documentation pages — Integration + Messaging categories
 # Source: https://docs.tibco.com/product/categories#name=Integration

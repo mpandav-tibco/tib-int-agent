@@ -53,13 +53,18 @@ class AnalysisReport:
             if ov.get("description"):
                 lines.append(f"> {ov['description']}\n")
             meta = []
-            if ov.get("version"):      meta.append(f"**Version:** {ov['version']}")
-            if ov.get("pattern"):      meta.append(f"**Pattern:** {ov['pattern']}")
-            if ov.get("trigger_port"): meta.append(f"**Trigger:** REST on port {ov['trigger_port']}")
+            if ov.get("version"):
+                meta.append(f"**Version:** {ov['version']}")
+            if ov.get("pattern"):
+                meta.append(f"**Pattern:** {ov['pattern']}")
+            if ov.get("trigger_port"):
+                meta.append(f"**Trigger:** REST on port {ov['trigger_port']}")
             flow_count = ov.get("flow_count", 0)
-            ep_count   = len(ov.get("endpoints", []))
-            if flow_count: meta.append(f"**Flows:** {flow_count}")
-            if ep_count:   meta.append(f"**Endpoints:** {ep_count}")
+            ep_count = len(ov.get("endpoints", []))
+            if flow_count:
+                meta.append(f"**Flows:** {flow_count}")
+            if ep_count:
+                meta.append(f"**Endpoints:** {ep_count}")
             if meta:
                 lines.append("  \n".join(meta) + "\n")
 

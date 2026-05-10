@@ -9,10 +9,10 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ".")
 
-from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer
-from tibco_agent.analyzers.log_analyzer import LogAnalyzer
-from tibco_agent.analyzers.bw_analyzer import BWAnalyzer
-from tibco_agent.analyzers.multi_analyzer import analyze_zip
+from tibco_agent.analyzers.flogo_analyzer import FlogoAnalyzer  # noqa: E402
+from tibco_agent.analyzers.log_analyzer import LogAnalyzer  # noqa: E402
+from tibco_agent.analyzers.bw_analyzer import BWAnalyzer  # noqa: E402
+from tibco_agent.analyzers.multi_analyzer import analyze_zip  # noqa: E402
 
 # ── Sample .flogo with intentional issues ────────────────────────────────────
 
@@ -137,7 +137,8 @@ def run_tests():
     print("\n" + "=" * 60)
     print("TEST 4: Multi-file ZIP Analysis")
     print("=" * 60)
-    import io, zipfile
+    import io
+    import zipfile
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w") as zf:
         zf.writestr("order-processor.flogo", SAMPLE_FLOGO)

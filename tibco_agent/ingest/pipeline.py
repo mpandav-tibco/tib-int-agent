@@ -3,18 +3,19 @@ from __future__ import annotations
 import bisect
 import logging
 import re
-import weaviate
 
-log = logging.getLogger(__name__)
-from weaviate.classes.config import Property, DataType
+import weaviate
 from llama_index.core import Settings
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import Document
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
+from weaviate.classes.config import DataType, Property
 
 from tibco_agent.config import settings
 from .sources.base import KnowledgeSource
+
+log = logging.getLogger(__name__)
 
 # Property definitions for the Weaviate v4 collection schema.
 _COLLECTION_PROPERTIES = [
