@@ -98,3 +98,22 @@ export const deleteUrl = (id: string, urlId: string): Promise<void> =>
 
 export const getFeedback = (id: string): Promise<AgentFeedback> =>
   get(`${BASE}/${id}/feedback`).then(json<AgentFeedback>);
+
+// ── Deployment ────────────────────────────────────────────────────────────────
+
+export const deployAgent = (id: string): Promise<Agent> =>
+  mutate(`${BASE}/${id}/deploy`, "POST").then(json<Agent>);
+
+export const undeployAgent = (id: string): Promise<void> =>
+  mutate(`${BASE}/${id}/deploy`, "DELETE").then((r) => {
+    if (!r.ok && r.status !== 204) throw new Error(`${r.status}: ${r.statusText}`);
+  });
+
+export const getDeployStatus = (id: string): Promise<{ status: string; container_id: string; url: string }> =>
+  get(`${BASE}/${id}/deploy/status`).then(json<{ status: string; container_id: string; url: string }>);
+
+export const exportAgent = (id: string, format: "docker-compose" | "kubernetes"): Promise<Blob> =>
+  get(`${BASE}/${id}/export?format=${format}`).then((r) => {
+    if (!r.ok) throw new Error(`${r.status}: ${r.statusText}`);
+    return r.blob();
+  });

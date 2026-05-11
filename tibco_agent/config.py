@@ -22,6 +22,8 @@ class Settings:
     vector_db: str       # weaviate | chroma | qdrant | pinecone | pgvector | activespaces
     vector_db_url: str   # DB-specific connection URL (blank = embedded/default)
     vector_db_api_key: str  # required for Pinecone; optional for Qdrant Cloud
+    chainlit_image: str  # Docker image used when deploying agents
+    deploy_port_start: int  # first host port to try when deploying agent containers
 
     def validate(self) -> None:
         Path(self.knowledge_path).mkdir(parents=True, exist_ok=True)
@@ -48,4 +50,6 @@ settings = Settings(
     vector_db=os.getenv("VECTOR_DB", "weaviate"),
     vector_db_url=os.getenv("VECTOR_DB_URL", os.getenv("WEAVIATE_URL", "http://localhost:8080")),
     vector_db_api_key=os.getenv("VECTOR_DB_API_KEY", ""),
+    chainlit_image=os.getenv("CHAINLIT_IMAGE", "tibco-ai-agent-chainlit:latest"),
+    deploy_port_start=int(os.getenv("DEPLOY_PORT_START", "8100")),
 )

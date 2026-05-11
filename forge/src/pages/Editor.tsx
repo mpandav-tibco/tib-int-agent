@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, ExternalLink, Globe, Link2, RefreshCw, Save, ThumbsDown, ThumbsUp, Trash2, Zap,
+  ArrowLeft, Box, Container, Download, ExternalLink, Globe, Link2, RefreshCw,
+  Save, Square, ThumbsDown, ThumbsUp, Trash2, Zap,
 } from "lucide-react";
 import {
-  addUrl, createAgent, deleteUrl, getChatUrl, getAgent, getFeedback, getStatus,
-  listFiles, listUrls, triggerIngest, updateAgent,
+  addUrl, createAgent, deleteUrl, deployAgent, exportAgent, getChatUrl, getAgent,
+  getFeedback, getDeployStatus, getStatus, listFiles, listUrls, triggerIngest,
+  undeployAgent, updateAgent,
 } from "../api";
 import FileUpload from "../components/FileUpload";
 import IngestStatus from "../components/IngestStatus";
@@ -41,7 +43,7 @@ const VDB_HELP: Record<string, string> = {
 
 const VDB_NEEDS_KEY = new Set(["pinecone", "activespaces"]);
 
-type RightTab = "kb" | "chat" | "feedback";
+type RightTab = "kb" | "chat" | "feedback" | "deploy";
 
 interface FormState {
   name: string;
@@ -178,6 +180,40 @@ export default function Editor() {
     mutationFn: (urlId: string) => deleteUrl(id!, urlId),
     onSuccess: () => refetchUrls(),
   });
+
+  const deployMutation = useMutation({
+    mutationFn: () => deployAgent(id!),
+    onSuccess: (updated) => {
+      qc.setQueryData(["agent", id], updated);
+      qc.invalidateQueries({ queryKey: ["agents"] });
+    },
+  });
+
+  const undeployMutation = useMutation({
+    mutationFn: () => undeployAgent(id!),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["agent", id] });
+      qc.invalidateQueries({ queryKey: ["agents"] });
+    },
+  });
+
+  const { data: deployStatus } = useQuery({
+    queryKey: ["deploy-status", id],
+    queryFn: () => getDeployStatus(id!),
+    enabled: !isNew && !!agent?.container_id,
+    refetchInterval: agent?.container_id ? 10000 : false,
+  });
+
+  function triggerExport(format: "docker-compose" | "kubernetes") {
+    exportAgent(id!, format).then((blob) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${agent?.name ?? "agent"}-${format}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }).catch((err) => console.error("Export failed:", err));
+  }
 
   const isReady = status?.status === "ready" || agent?.status === "ready";
   const isIngesting = status?.status === "ingesting" || agent?.status === "ingesting";
@@ -370,6 +406,13 @@ export default function Editor() {
               disabled={isNew}
             >
               Feedback
+            </TabButton>
+            <TabButton
+              active={rightTab === "deploy"}
+              onClick={() => setRightTab("deploy")}
+              disabled={isNew}
+            >
+              Deploy
             </TabButton>
 
             {rightTab === "chat" && chatUrl && (
@@ -580,6 +623,104 @@ export default function Editor() {
               )}
             </div>
           )}
+          {/* ── Deploy tab ────────────────────────────────────────────── */}
+          {rightTab === "deploy" && (
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+
+              {/* Docker section */}
+              <section className="space-y-4">
+                <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  <Container size={13} /> Docker
+                </h3>
+                <p className="text-xs text-gray-400">
+                  Image: <span className="font-mono">tibco-ai-agent-chainlit:latest</span>
+                  {" "}— build with{" "}
+                  <span className="font-mono">docker build -t tibco-ai-agent-chainlit:latest -f Dockerfile .</span>
+                </p>
+
+                {agent?.container_id ? (
+                  /* Running state */
+                  <div className="bg-green-50 border border-green-100 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+                      <span className="text-sm font-medium text-green-800">
+                        {deployStatus?.status === "running" ? "Running" : (deployStatus?.status ?? "Deployed")}
+                      </span>
+                    </div>
+                    <a
+                      href={agent.deployed_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 text-sm text-brand-600 hover:underline"
+                    >
+                      <ExternalLink size={13} /> {agent.deployed_url}
+                    </a>
+                    <p className="text-xs text-gray-400 font-mono truncate">
+                      Container: {agent.container_id.slice(0, 12)}
+                    </p>
+                    <button
+                      onClick={() => undeployMutation.mutate()}
+                      disabled={undeployMutation.isPending}
+                      className="flex items-center gap-1.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 text-sm px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      <Square size={13} />
+                      {undeployMutation.isPending ? "Stopping…" : "Stop Container"}
+                    </button>
+                    {undeployMutation.isError && (
+                      <p className="text-xs text-red-500">{String(undeployMutation.error)}</p>
+                    )}
+                  </div>
+                ) : (
+                  /* Not deployed state */
+                  <div className="flex gap-3 flex-wrap">
+                    <button
+                      onClick={() => deployMutation.mutate()}
+                      disabled={deployMutation.isPending}
+                      className="flex items-center gap-2 bg-gray-800 hover:bg-gray-900 disabled:opacity-40 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+                    >
+                      <Box size={14} />
+                      {deployMutation.isPending ? "Deploying…" : "Deploy to Docker"}
+                    </button>
+                    <button
+                      onClick={() => triggerExport("docker-compose")}
+                      className="flex items-center gap-2 text-sm text-gray-700 border border-gray-200 hover:border-gray-400 px-4 py-2 rounded-lg transition-colors"
+                    >
+                      <Download size={14} /> Export Compose
+                    </button>
+                  </div>
+                )}
+                {deployMutation.isError && (
+                  <p className="text-sm text-red-500">{String(deployMutation.error)}</p>
+                )}
+              </section>
+
+              <hr className="border-gray-100" />
+
+              {/* Kubernetes section */}
+              <section className="space-y-4">
+                <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  <Globe size={13} /> Kubernetes
+                </h3>
+                <p className="text-xs text-gray-400">
+                  Downloads a ZIP with <span className="font-mono">deployment.yaml</span>,{" "}
+                  <span className="font-mono">service.yaml</span>,{" "}
+                  <span className="font-mono">ingress.yaml</span>,{" "}
+                  <span className="font-mono">secret.yaml</span>,{" "}
+                  <span className="font-mono">configmap.yaml</span>,{" "}
+                  <span className="font-mono">kustomization.yaml</span> + README.
+                  Apply with <span className="font-mono">kubectl apply -k .</span>
+                </p>
+                <button
+                  onClick={() => triggerExport("kubernetes")}
+                  className="flex items-center gap-2 text-sm text-gray-700 border border-gray-200 hover:border-gray-400 px-4 py-2 rounded-lg transition-colors"
+                >
+                  <Download size={14} /> Export Manifests
+                </button>
+              </section>
+
+            </div>
+          )}
+
         </main>
       </div>
     </div>

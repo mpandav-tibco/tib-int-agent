@@ -35,7 +35,10 @@ CREATE TABLE IF NOT EXISTS agents (
     last_ingest_at      TEXT NOT NULL DEFAULT '',
     vector_db           TEXT NOT NULL DEFAULT 'weaviate',
     vector_db_url       TEXT NOT NULL DEFAULT '',
-    vector_db_api_key   TEXT NOT NULL DEFAULT ''
+    vector_db_api_key   TEXT NOT NULL DEFAULT '',
+    container_id        TEXT NOT NULL DEFAULT '',
+    deployed_port       INTEGER NOT NULL DEFAULT 0,
+    deployed_url        TEXT NOT NULL DEFAULT ''
 )
 """
 
@@ -55,6 +58,7 @@ _COLUMNS = [
     "llm_provider", "llm_model", "llm_api_key", "llm_api_base", "embed_model",
     "created_at", "updated_at", "status", "last_ingest_chunks", "last_ingest_at",
     "vector_db", "vector_db_url", "vector_db_api_key",
+    "container_id", "deployed_port", "deployed_url",
 ]
 
 
@@ -91,6 +95,9 @@ class AgentStore:
                     ("vector_db",          "'weaviate'"),
                     ("vector_db_url",      "''"),
                     ("vector_db_api_key",  "''"),
+                    ("container_id",       "''"),
+                    ("deployed_port",      "0"),
+                    ("deployed_url",       "''"),
                 ]
                 for col, default in _migrations:
                     try:
@@ -170,6 +177,20 @@ class AgentStore:
             con.execute(
                 "UPDATE agents SET status=?, updated_at=? WHERE id=?",
                 (status, _now(), agent_id),
+            )
+
+    def set_deployment(self, agent_id: str, container_id: str, port: int, url: str) -> None:
+        with self._get_conn() as con:
+            con.execute(
+                "UPDATE agents SET container_id=?, deployed_port=?, deployed_url=?, updated_at=? WHERE id=?",
+                (container_id, port, url, _now(), agent_id),
+            )
+
+    def clear_deployment(self, agent_id: str) -> None:
+        with self._get_conn() as con:
+            con.execute(
+                "UPDATE agents SET container_id='', deployed_port=0, deployed_url='', updated_at=? WHERE id=?",
+                (_now(), agent_id),
             )
 
     def record_ingest(self, agent_id: str, chunks: int) -> None:

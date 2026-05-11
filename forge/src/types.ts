@@ -13,6 +13,9 @@ export interface Agent {
   vector_db: string;
   vector_db_url: string;
   vector_db_api_key: string;  // masked as "***" in list/get responses
+  container_id: string;
+  deployed_port: number;
+  deployed_url: string;
   created_at: string;
   updated_at: string;
   status: "draft" | "ingesting" | "ready" | "error";

@@ -25,6 +25,9 @@ class Agent:
     vector_db: str = "weaviate"    # weaviate | chroma | qdrant | pinecone | pgvector | activespaces
     vector_db_url: str = ""        # connection URL; blank → use global default
     vector_db_api_key: str = ""    # API key for cloud providers (Pinecone, Qdrant Cloud)
+    container_id: str = ""         # Docker container ID when deployed
+    deployed_port: int = 0         # host port the container is mapped to
+    deployed_url: str = ""         # full URL e.g. http://localhost:8101
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -49,6 +52,9 @@ class Agent:
             "vector_db": self.vector_db,
             "vector_db_url": self.vector_db_url,
             "vector_db_api_key": self.vector_db_api_key,
+            "container_id": self.container_id,
+            "deployed_port": self.deployed_port,
+            "deployed_url": self.deployed_url,
         }
 
     def to_public_dict(self) -> dict:

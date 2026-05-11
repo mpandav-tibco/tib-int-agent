@@ -1,13 +1,16 @@
 """FastAPI router for AgentForge — agent CRUD, file upload, KB ingestion."""
 from __future__ import annotations
 
+import io
 import logging
 import os
 import shutil
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .store import store
@@ -28,6 +31,10 @@ _ingest_status: dict[str, dict] = {}
 
 # Default Chainlit chat URL base (override with CHAINLIT_URL env var)
 _CHAINLIT_URL = os.environ.get("CHAINLIT_URL", "http://localhost:8080")
+
+# Docker deployment settings
+_CHAINLIT_IMAGE = os.environ.get("CHAINLIT_IMAGE", "tibco-ai-agent-chainlit:latest")
+_DEPLOY_PORT_START = int(os.environ.get("DEPLOY_PORT_START", "8100"))
 
 
 # ── Request / Response schemas ───────────────────────────────────────────────
@@ -327,3 +334,68 @@ def get_feedback(agent_id: str):
         "thumbs_down": counts.get("down", 0),
         "recent": recent,
     }
+
+
+# ── Deployment ────────────────────────────────────────────────────────────────
+
+@router.post("/{agent_id}/deploy", status_code=201)
+def deploy_agent(agent_id: str):
+    """Run a Docker container for the agent and store its container_id + port."""
+    agent = _require_agent(agent_id)
+    if agent.container_id:
+        raise HTTPException(status_code=409, detail="Agent is already deployed — undeploy first")
+    try:
+        from tibco_agent.deploy.docker_manager import deploy
+        container_id, port = deploy(agent, _CHAINLIT_IMAGE, _DEPLOY_PORT_START)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    url = f"http://localhost:{port}"
+    store.set_deployment(agent_id, container_id, port, url)
+    return store.get(agent_id).to_public_dict()  # type: ignore[union-attr]
+
+
+@router.delete("/{agent_id}/deploy", status_code=204)
+def undeploy_agent(agent_id: str):
+    """Stop and remove the agent's Docker container."""
+    agent = _require_agent(agent_id)
+    if not agent.container_id:
+        raise HTTPException(status_code=404, detail="Agent is not currently deployed")
+    from tibco_agent.deploy.docker_manager import undeploy
+    undeploy(agent.container_id)
+    store.clear_deployment(agent_id)
+
+
+@router.get("/{agent_id}/deploy/status")
+def deploy_status(agent_id: str):
+    """Return live Docker container status for the agent."""
+    agent = _require_agent(agent_id)
+    if not agent.container_id:
+        return {"status": "not_deployed", "container_id": "", "url": ""}
+    from tibco_agent.deploy.docker_manager import container_status
+    status = container_status(agent.container_id)
+    return {"status": status, "container_id": agent.container_id, "url": agent.deployed_url}
+
+
+@router.get("/{agent_id}/export")
+def export_agent(agent_id: str, format: str = Query("docker-compose", pattern="^(docker-compose|kubernetes)$")):
+    """Generate and download a deployment artifact ZIP."""
+    agent = _require_agent(agent_id)
+    from tibco_agent.deploy.templates import render_docker_compose, render_k8s_manifests
+
+    buf = io.BytesIO()
+    safe_name = agent.name.replace(" ", "_")
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if format == "docker-compose":
+            zf.writestr("docker-compose.yml", render_docker_compose(agent, _CHAINLIT_IMAGE))
+        else:
+            for filename, content in render_k8s_manifests(agent).items():
+                zf.writestr(filename, content)
+
+    buf.seek(0)
+    filename = f"{safe_name}-{format}.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
