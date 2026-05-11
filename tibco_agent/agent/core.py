@@ -211,10 +211,14 @@ def build_prompt(
     chat_history: list[dict] | None = None,
     collection_name: str = "",
     agent_name: str = "",
+    vector_db: str = "",
+    vector_db_url: str = "",
+    vector_db_api_key: str = "",
 ) -> str:
     """Assemble the full LLM prompt.  on_step(message, pct) is called at each stage.
 
-    collection_name: Weaviate collection to search (empty → global default).
+    collection_name: vector store collection to search (empty → global default).
+    vector_db/url/api_key: per-agent store overrides (empty → global settings).
     agent_name: used to personalise the assistant label in injected history.
     """
     _step = on_step or (lambda _msg, _pct: None)
@@ -239,7 +243,7 @@ def build_prompt(
         parts.append("\n".join(history_lines))
 
     _step("Searching knowledge base…", 15)
-    kb = search_knowledge(question, collection_name)
+    kb = search_knowledge(question, collection_name, vector_db, vector_db_url, vector_db_api_key)
     if kb:
         parts.append(
             "\n\n## Knowledge Base Excerpts\n"
@@ -347,11 +351,17 @@ def ask(
     system_prompt: str = "",
     collection_name: str = "",
     agent_name: str = "",
+    vector_db: str = "",
+    vector_db_url: str = "",
+    vector_db_api_key: str = "",
 ) -> str:
     prompt = build_prompt(
         question, flogo_content, log_content, bw_content,
         chat_history=chat_history,
         collection_name=collection_name,
         agent_name=agent_name,
+        vector_db=vector_db,
+        vector_db_url=vector_db_url,
+        vector_db_api_key=vector_db_api_key,
     )
     return call_llm(prompt, system_prompt=system_prompt)

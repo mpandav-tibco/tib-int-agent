@@ -19,6 +19,9 @@ class Settings:
     llm_provider: str    # ollama | openai | anthropic | groq | custom
     llm_api_key: str     # empty for local ollama
     llm_api_base: str    # custom base URL for groq / custom providers
+    vector_db: str       # weaviate | chroma | qdrant | pinecone | pgvector | activespaces
+    vector_db_url: str   # DB-specific connection URL (blank = embedded/default)
+    vector_db_api_key: str  # required for Pinecone; optional for Qdrant Cloud
 
     def validate(self) -> None:
         Path(self.knowledge_path).mkdir(parents=True, exist_ok=True)
@@ -42,4 +45,7 @@ settings = Settings(
     llm_provider=os.getenv("LLM_PROVIDER", "ollama"),
     llm_api_key=os.getenv("LLM_API_KEY", ""),
     llm_api_base=os.getenv("LLM_API_BASE", ""),
+    vector_db=os.getenv("VECTOR_DB", "weaviate"),
+    vector_db_url=os.getenv("VECTOR_DB_URL", os.getenv("WEAVIATE_URL", "http://localhost:8080")),
+    vector_db_api_key=os.getenv("VECTOR_DB_API_KEY", ""),
 )

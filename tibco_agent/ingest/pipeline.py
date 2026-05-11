@@ -4,33 +4,20 @@ import bisect
 import logging
 import re
 
-import weaviate
 from llama_index.core import Settings
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import Document
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
-from weaviate.classes.config import DataType, Property
 
 from tibco_agent.config import settings
 from .sources.base import KnowledgeSource
 
 log = logging.getLogger(__name__)
 
-# Property definitions for the Weaviate v4 collection schema.
-_COLLECTION_PROPERTIES = [
-    Property(name="text",        data_type=DataType.TEXT),
-    Property(name="file_name",   data_type=DataType.TEXT),
-    Property(name="source_type", data_type=DataType.TEXT),
-    Property(name="product",     data_type=DataType.TEXT),
-    Property(name="doc_id",      data_type=DataType.TEXT),
-    Property(name="section",     data_type=DataType.TEXT),
-]
-
 _MD_HEADER_RE   = re.compile(r"^#{1,4}\s+(.+)", re.MULTILINE)
 _HTML_HEADER_RE = re.compile(r"<h[1-4][^>]*>(.*?)</h[1-4]>", re.IGNORECASE | re.DOTALL)
 _HTML_TAG_RE    = re.compile(r"<[^>]+>")
-# Heuristic for plain text: short line, starts uppercase, no trailing punctuation
 _TEXT_HEADING_RE = re.compile(r"^[A-Z][^\n]{0,78}(?<![.,;:!?])\s*$", re.MULTILINE)
 
 
@@ -66,29 +53,13 @@ def _section_for_offset(sections: list[tuple[int, str]], offset: int) -> str:
     return sections[idx][1] if idx >= 0 else ""
 
 
-def _open_client(weaviate_url: str | None = None) -> weaviate.WeaviateClient:
-    url = weaviate_url or settings.weaviate_url
-    # Strip scheme for connect_to_custom (it takes host + port separately)
-    bare = url.removeprefix("https://").removeprefix("http://")
-    host, _, port_str = bare.partition(":")
-    port = int(port_str) if port_str.isdigit() else 8080
-    return weaviate.connect_to_custom(
-        http_host=host or "localhost",
-        http_port=port,
-        http_secure=url.startswith("https://"),
-        grpc_host=host or "localhost",
-        grpc_port=50051,
-        grpc_secure=False,
-    )
-
-
 class IngestionPipeline:
     """
     Orchestrates loading from multiple KnowledgeSource instances,
-    chunking, embedding (via Ollama), and storing into Weaviate v4.
+    chunking, embedding (via LlamaIndex), and storing via a VectorStoreAdapter.
 
     Usage:
-        pipeline = IngestionPipeline()
+        pipeline = IngestionPipeline(vector_db="chroma")
         pipeline.add_source(FileSource("./data/knowledge"))
         pipeline.add_source(WebSource(urls=[...], product_tag="flogo"))
         chunks = pipeline.run()
@@ -99,14 +70,20 @@ class IngestionPipeline:
         chunk_size: int = 300,
         chunk_overlap: int = 50,
         collection_name: str = "",
+        # Legacy param — still accepted for back-compat; maps to vector_db_url for Weaviate
         weaviate_url: str = "",
+        vector_db: str = "",
+        vector_db_url: str = "",
+        vector_db_api_key: str = "",
     ) -> None:
         self._sources: list[KnowledgeSource] = []
         self._chunk_size = chunk_size
         self._chunk_overlap = chunk_overlap
-        # Per-pipeline overrides — fall back to global settings when empty
         self._collection_name = collection_name
-        self._weaviate_url = weaviate_url
+        self._vector_db = vector_db or settings.vector_db
+        # Back-compat: weaviate_url param was used by the old Weaviate-only pipeline
+        self._vector_db_url = vector_db_url or weaviate_url
+        self._vector_db_api_key = vector_db_api_key
 
     def add_source(self, source: KnowledgeSource) -> "IngestionPipeline":
         self._sources.append(source)
@@ -138,7 +115,6 @@ class IngestionPipeline:
         splitter = SentenceSplitter(chunk_size=self._chunk_size, chunk_overlap=self._chunk_overlap)
         nodes = splitter.get_nodes_from_documents(llama_docs)
 
-        # Pre-compute section maps per source document for citation enrichment
         _section_maps: dict[str, list[tuple[int, str]]] = {
             d.source: _extract_sections(d.content, d.source)
             for d in raw_docs
@@ -150,48 +126,32 @@ class IngestionPipeline:
             node.metadata["section"] = _section_for_offset(sections, offset)
         log.info("Total: %d chunks from %d document(s)", len(nodes), len(raw_docs))
 
-        client = _open_client(self._weaviate_url or None)
-        class_name = self._collection_name or settings.collection_name
+        # Embed all nodes
+        log.info("Embedding %d chunks (this takes a moment on first run)...", len(nodes))
+        embed_model = Settings.embed_model
+        chunks = []
+        for node in nodes:
+            text = node.get_content()
+            vector = embed_model.get_text_embedding(text)
+            chunks.append({
+                "text":        text,
+                "vector":      vector,
+                "file_name":   node.metadata.get("file_name", ""),
+                "source_type": node.metadata.get("source_type", ""),
+                "product":     node.metadata.get("product", ""),
+                "doc_id":      node.node_id,
+                "section":     node.metadata.get("section", ""),
+            })
 
-        # ── Schema management (Weaviate v4) ────────────────────────────────────
-        with client:
-            if client.collections.exists(class_name):
-                if reset:
-                    client.collections.delete(class_name)
-                    log.info("Dropped existing collection '%s'.", class_name)
-                # else: append mode — collection already exists
-
-            if not client.collections.exists(class_name):
-                client.collections.create(
-                    name=class_name,
-                    properties=_COLLECTION_PROPERTIES,
-                )
-                log.info("Created Weaviate collection '%s'.", class_name)
-
-            # ── Embed + store ──────────────────────────────────────────────────
-            log.info("Embedding and indexing (this takes a minute on first run)...")
-            embed_model = Settings.embed_model
-            collection = client.collections.get(class_name)
-            stored = 0
-
-            with collection.batch.dynamic() as batch:
-                for node in nodes:
-                    text = node.get_content()
-                    vector = embed_model.get_text_embedding(text)
-                    batch.add_object(
-                        properties={
-                            "text": text,
-                            "file_name": node.metadata.get("file_name", ""),
-                            "source_type": node.metadata.get("source_type", ""),
-                            "product": node.metadata.get("product", ""),
-                            "doc_id": node.node_id,
-                            "section": node.metadata.get("section", ""),
-                        },
-                        vector=vector,
-                    )
-                    stored += 1
-
-        log.info("Done. %d chunks stored in Weaviate '%s'.", stored, class_name)
+        # Store via pluggable adapter
+        from tibco_agent.vectorstore.factory import get_adapter
+        adapter = get_adapter(self._vector_db, self._vector_db_url, self._vector_db_api_key)
+        collection_name = self._collection_name or settings.collection_name
+        stored = adapter.ingest(chunks, collection_name, reset=reset)
+        log.info(
+            "Done. %d chunks stored via %s in '%s'.",
+            stored, self._vector_db, collection_name,
+        )
         return stored
 
     def _configure_llama(self) -> None:

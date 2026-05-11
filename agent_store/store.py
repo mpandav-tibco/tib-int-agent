@@ -32,7 +32,10 @@ CREATE TABLE IF NOT EXISTS agents (
     updated_at          TEXT NOT NULL,
     status              TEXT NOT NULL DEFAULT 'draft',
     last_ingest_chunks  INTEGER NOT NULL DEFAULT 0,
-    last_ingest_at      TEXT NOT NULL DEFAULT ''
+    last_ingest_at      TEXT NOT NULL DEFAULT '',
+    vector_db           TEXT NOT NULL DEFAULT 'weaviate',
+    vector_db_url       TEXT NOT NULL DEFAULT '',
+    vector_db_api_key   TEXT NOT NULL DEFAULT ''
 )
 """
 
@@ -51,6 +54,7 @@ _COLUMNS = [
     "id", "name", "title", "description", "system_prompt", "collection_name",
     "llm_provider", "llm_model", "llm_api_key", "llm_api_base", "embed_model",
     "created_at", "updated_at", "status", "last_ingest_chunks", "last_ingest_at",
+    "vector_db", "vector_db_url", "vector_db_api_key",
 ]
 
 
@@ -80,8 +84,15 @@ class AgentStore:
                 self._conn.execute("PRAGMA foreign_keys=ON")
                 self._conn.execute(_CREATE_TABLE)
                 self._conn.execute(_CREATE_URLS_TABLE)
-                # Migrate existing DBs that predate last_ingest_* columns
-                for col, default in [("last_ingest_chunks", "0"), ("last_ingest_at", "''")]:
+                # Migrate existing DBs that predate newer columns
+                _migrations = [
+                    ("last_ingest_chunks", "0"),
+                    ("last_ingest_at",     "''"),
+                    ("vector_db",          "'weaviate'"),
+                    ("vector_db_url",      "''"),
+                    ("vector_db_api_key",  "''"),
+                ]
+                for col, default in _migrations:
                     try:
                         self._conn.execute(
                             f"ALTER TABLE agents ADD COLUMN {col} TEXT NOT NULL DEFAULT {default}"
@@ -104,6 +115,9 @@ class AgentStore:
         llm_api_key: str = "",
         llm_api_base: str = "",
         embed_model: str = "",
+        vector_db: str = "weaviate",
+        vector_db_url: str = "",
+        vector_db_api_key: str = "",
     ) -> Agent:
         agent_id = uuid.uuid4().hex
         collection_name = f"Agent_{agent_id[:8].capitalize()}"
@@ -123,6 +137,9 @@ class AgentStore:
             created_at=now,
             updated_at=now,
             status="draft",
+            vector_db=vector_db,
+            vector_db_url=vector_db_url,
+            vector_db_api_key=vector_db_api_key,
         )
         cols = ", ".join(_COLUMNS)
         placeholders = ", ".join("?" * len(_COLUMNS))
@@ -178,6 +195,9 @@ class AgentStore:
             llm_api_key=source.llm_api_key,
             llm_api_base=source.llm_api_base,
             embed_model=source.embed_model,
+            vector_db=source.vector_db,
+            vector_db_url=source.vector_db_url,
+            vector_db_api_key=source.vector_db_api_key,
         )
 
     def delete(self, agent_id: str) -> None:

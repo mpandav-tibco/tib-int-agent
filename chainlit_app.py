@@ -816,6 +816,9 @@ async def on_message(message: cl.Message) -> None:
         _collection = agent_config.collection_name if agent_config else ""
         _agent_name = agent_config.name if agent_config else ""
         _system_prompt = agent_config.system_prompt if agent_config else ""
+        _vdb = agent_config.vector_db if agent_config else ""
+        _vdb_url = agent_config.vector_db_url if agent_config else ""
+        _vdb_key = agent_config.vector_db_api_key if agent_config else ""
 
         prompt = await loop.run_in_executor(
             None,
@@ -828,6 +831,9 @@ async def on_message(message: cl.Message) -> None:
                 chat_history=chat_history or None,
                 collection_name=_collection,
                 agent_name=_agent_name,
+                vector_db=_vdb,
+                vector_db_url=_vdb_url,
+                vector_db_api_key=_vdb_key,
             ),
         )
 

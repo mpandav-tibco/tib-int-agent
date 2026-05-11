@@ -22,6 +22,9 @@ class Agent:
     status: str               # draft | ingesting | ready | error
     last_ingest_chunks: int = 0    # chunk count from last successful ingest
     last_ingest_at: str = ""       # ISO-8601 timestamp of last successful ingest
+    vector_db: str = "weaviate"    # weaviate | chroma | qdrant | pinecone | pgvector | activespaces
+    vector_db_url: str = ""        # connection URL; blank → use global default
+    vector_db_api_key: str = ""    # API key for cloud providers (Pinecone, Qdrant Cloud)
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -43,10 +46,14 @@ class Agent:
             "status": self.status,
             "last_ingest_chunks": self.last_ingest_chunks,
             "last_ingest_at": self.last_ingest_at,
+            "vector_db": self.vector_db,
+            "vector_db_url": self.vector_db_url,
+            "vector_db_api_key": self.vector_db_api_key,
         }
 
     def to_public_dict(self) -> dict:
-        """Like to_dict() but with the API key masked — safe to send to the browser."""
+        """Like to_dict() but with API keys masked — safe to send to the browser."""
         d = self.to_dict()
         d["llm_api_key"] = "***" if self.llm_api_key else ""
+        d["vector_db_api_key"] = "***" if self.vector_db_api_key else ""
         return d

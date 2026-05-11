@@ -10,6 +10,9 @@ export interface Agent {
   llm_api_key: string;   // masked as "***" in list/get responses
   llm_api_base: string;
   embed_model: string;
+  vector_db: string;
+  vector_db_url: string;
+  vector_db_api_key: string;  // masked as "***" in list/get responses
   created_at: string;
   updated_at: string;
   status: "draft" | "ingesting" | "ready" | "error";

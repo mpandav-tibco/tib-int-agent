@@ -21,6 +21,26 @@ const PROVIDER_HINTS: Record<string, string> = {
   custom:         "depends on your provider",
 };
 
+const VDB_URL_PLACEHOLDER: Record<string, string> = {
+  weaviate:     "http://localhost:8080",
+  chroma:       "http://localhost:8000 (or blank for embedded local storage)",
+  qdrant:       "http://localhost:6333 (or blank for in-memory)",
+  pinecone:     "https://<index>-<project>.svc.<env>.pinecone.io",
+  pgvector:     "postgresql://user:pass@host:5432/dbname",
+  activespaces: "tibcosub://hostname:port",
+};
+
+const VDB_HELP: Record<string, string> = {
+  weaviate:     "Default vector store. Requires a running Weaviate instance.",
+  chroma:       "Leave URL blank to use embedded local storage (no server needed).",
+  qdrant:       "Leave URL blank for in-memory mode (data lost on restart).",
+  pinecone:     "Provide your Pinecone host URL and API key from the Pinecone console.",
+  pgvector:     "PostgreSQL with the pgvector extension. Use a full DSN as the URL.",
+  activespaces: "Requires the TIBCO ActiveSpaces Python SDK installed separately.",
+};
+
+const VDB_NEEDS_KEY = new Set(["pinecone", "activespaces"]);
+
 type RightTab = "kb" | "chat" | "feedback";
 
 interface FormState {
@@ -33,11 +53,15 @@ interface FormState {
   llm_api_key: string;
   llm_api_base: string;
   embed_model: string;
+  vector_db: string;
+  vector_db_url: string;
+  vector_db_api_key: string;
 }
 
 const DEFAULTS: FormState = {
   name: "", title: "", description: "", system_prompt: "",
   llm_provider: "ollama", llm_model: "", llm_api_key: "", llm_api_base: "", embed_model: "",
+  vector_db: "weaviate", vector_db_url: "", vector_db_api_key: "",
 };
 
 export default function Editor() {
@@ -95,6 +119,9 @@ export default function Editor() {
         system_prompt: agent.system_prompt, llm_provider: agent.llm_provider,
         llm_model: agent.llm_model, llm_api_key: "",
         llm_api_base: agent.llm_api_base, embed_model: agent.embed_model,
+        vector_db: agent.vector_db ?? "weaviate",
+        vector_db_url: agent.vector_db_url ?? "",
+        vector_db_api_key: "",
       });
     }
   }, [agent]);
@@ -121,6 +148,7 @@ export default function Editor() {
     mutationFn: async (): Promise<Agent> => {
       const payload = { ...form };
       if (!payload.llm_api_key) delete (payload as Partial<FormState>).llm_api_key;
+      if (!payload.vector_db_api_key) delete (payload as Partial<FormState>).vector_db_api_key;
       return isNew ? createAgent(payload) : updateAgent(id!, payload);
     },
     onSuccess: (saved) => {
@@ -263,6 +291,42 @@ export default function Editor() {
               <input value={form.embed_model} onChange={set("embed_model")}
                 placeholder="nomic-embed-text (default)" className="input" />
             </Field>
+          </section>
+
+          <hr className="border-gray-100" />
+
+          {/* Vector Store Config */}
+          <section className="space-y-3">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Vector Store</h2>
+            <Field label="Backend">
+              <select value={form.vector_db} onChange={set("vector_db")} className="input">
+                {["weaviate", "chroma", "qdrant", "pinecone", "pgvector", "activespaces"].map((db) => (
+                  <option key={db} value={db}>{db}</option>
+                ))}
+              </select>
+              {VDB_HELP[form.vector_db] && (
+                <p className="text-xs text-gray-400 mt-0.5">{VDB_HELP[form.vector_db]}</p>
+              )}
+            </Field>
+            <Field label="URL">
+              <input
+                value={form.vector_db_url}
+                onChange={set("vector_db_url")}
+                placeholder={VDB_URL_PLACEHOLDER[form.vector_db] ?? ""}
+                className="input"
+              />
+            </Field>
+            {(VDB_NEEDS_KEY.has(form.vector_db)) && (
+              <Field label="API Key">
+                <input
+                  type="password"
+                  value={form.vector_db_api_key}
+                  onChange={set("vector_db_api_key")}
+                  placeholder="Required for this backend"
+                  className="input"
+                />
+              </Field>
+            )}
           </section>
 
           {saveMutation.isError && (

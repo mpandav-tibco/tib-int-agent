@@ -42,6 +42,9 @@ class CreateAgentRequest(BaseModel):
     llm_api_key: str = ""
     llm_api_base: str = ""
     embed_model: str = ""
+    vector_db: str = "weaviate"
+    vector_db_url: str = ""
+    vector_db_api_key: str = ""
 
 
 class UpdateAgentRequest(BaseModel):
@@ -55,6 +58,9 @@ class UpdateAgentRequest(BaseModel):
     llm_api_base: str | None = None
     embed_model: str | None = None
     status: str | None = None
+    vector_db: str | None = None
+    vector_db_url: str | None = None
+    vector_db_api_key: str | None = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -72,19 +78,25 @@ def _require_agent(agent_id: str) -> Agent:
     return agent
 
 
-def _drop_weaviate_collection(collection_name: str) -> None:
+def _drop_collection(collection_name: str, vector_db: str = "weaviate",
+                     vector_db_url: str = "", vector_db_api_key: str = "") -> None:
     try:
-        from tibco_agent.tools.agent_tools import _get_weaviate_client
-        client = _get_weaviate_client()
-        if client.collections.exists(collection_name):
-            client.collections.delete(collection_name)
-            log.info("Dropped Weaviate collection %s", collection_name)
+        from tibco_agent.vectorstore.factory import get_adapter
+        adapter = get_adapter(vector_db, vector_db_url, vector_db_api_key)
+        adapter.delete_collection(collection_name)
     except Exception as exc:
-        log.warning("Could not drop Weaviate collection %s: %s", collection_name, exc)
+        log.warning("Could not drop collection %s (%s): %s", collection_name, vector_db, exc)
 
 
-def _run_ingest(agent_id: str, collection_name: str, files_dir: Path) -> None:
-    """Background task: ingest all files + URLs for the agent's Weaviate collection."""
+def _run_ingest(
+    agent_id: str,
+    collection_name: str,
+    files_dir: Path,
+    vector_db: str = "weaviate",
+    vector_db_url: str = "",
+    vector_db_api_key: str = "",
+) -> None:
+    """Background task: ingest all files + URLs for the agent's collection."""
     _ingest_status[agent_id] = {"status": "ingesting", "chunks": 0, "error": None,
                                  "started_at": datetime.now(timezone.utc).isoformat()}
     store.set_status(agent_id, "ingesting")
@@ -92,13 +104,14 @@ def _run_ingest(agent_id: str, collection_name: str, files_dir: Path) -> None:
         from tibco_agent.ingest.pipeline import IngestionPipeline
         from tibco_agent.ingest.sources.file_source import FileSource
         from tibco_agent.ingest.sources.web_source import WebSource
-        from tibco_agent.config import settings
 
         pipeline = IngestionPipeline(
             chunk_size=300,
             chunk_overlap=50,
             collection_name=collection_name,
-            weaviate_url=settings.weaviate_url,
+            vector_db=vector_db,
+            vector_db_url=vector_db_url,
+            vector_db_api_key=vector_db_api_key,
         )
 
         # Files
@@ -143,6 +156,9 @@ def create_agent(req: CreateAgentRequest):
         llm_api_key=req.llm_api_key,
         llm_api_base=req.llm_api_base,
         embed_model=req.embed_model,
+        vector_db=req.vector_db,
+        vector_db_url=req.vector_db_url,
+        vector_db_api_key=req.vector_db_api_key,
     )
     _agent_files_dir(agent.id)  # pre-create upload directory
     return agent.to_public_dict()
@@ -180,8 +196,7 @@ def delete_agent(agent_id: str):
     files_dir = _FILES_ROOT / agent_id
     if files_dir.exists():
         shutil.rmtree(files_dir)
-    # Drop Weaviate collection
-    _drop_weaviate_collection(agent.collection_name)
+    _drop_collection(agent.collection_name, agent.vector_db, agent.vector_db_url, agent.vector_db_api_key)
     store.delete(agent_id)
     _ingest_status.pop(agent_id, None)
 
@@ -238,7 +253,10 @@ def trigger_ingest(agent_id: str, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail="No files or URLs added yet — add some knowledge sources first")
     if _ingest_status.get(agent_id, {}).get("status") == "ingesting":
         raise HTTPException(status_code=409, detail="Ingestion already in progress")
-    background_tasks.add_task(_run_ingest, agent_id, agent.collection_name, files_dir)
+    background_tasks.add_task(
+        _run_ingest, agent_id, agent.collection_name, files_dir,
+        agent.vector_db, agent.vector_db_url, agent.vector_db_api_key,
+    )
     return {"message": "Ingestion started", "collection": agent.collection_name}
 
 
