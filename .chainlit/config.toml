@@ -99,9 +99,9 @@ reaction_on_message_received = false
     allowed_executables = [ "npx", "uvx" ]
 
 [UI]
-name = "TARA"
-description = "TIBCO AI Review Agent — Expert assistant for TIBCO BW, Flogo, EMS, and Messaging"
-favicon = "/public/tara_avatar.svg"
+name = "AgentForge"
+description = "AgentForge — Expert assistant for BusinessWorks, Flogo, EMS, and Messaging"
+favicon = "/public/agentforge_avatar.svg"
 logo = "/public/logo_light.svg"
 logo_dark = "/public/logo_dark.svg"
 

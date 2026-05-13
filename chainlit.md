@@ -1,12 +1,12 @@
-# Welcome to TARA — TIBCO AI Review Agent
+# Welcome to AgentForge
 
-Your expert assistant for **TIBCO BusinessWorks**, **Flogo**, **EMS**, and **Messaging**.
+Your expert assistant for **BusinessWorks**, **Flogo**, **EMS**, and **Messaging**.
 
 ---
 
-## What TARA can do
+## What AgentForge can do
 
-- **Answer questions** about TIBCO middleware patterns, best practices, Kubernetes deployment, and platform architecture
+- **Answer questions** about middleware patterns, best practices, Kubernetes deployment, and platform architecture
 - **Review applications** — upload a `.flogo` or `.bwp` file and receive an architect-level analysis with actionable findings
 - **Diagnose logs** — upload a pod log from any environment and get root-cause diagnosis with exact remediation steps
 - **Guide troubleshooting** — use the suggestion chips above to start a structured diagnostic workflow
@@ -21,11 +21,11 @@ Your expert assistant for **TIBCO BusinessWorks**, **Flogo**, **EMS**, and **Mes
 
 | File | Description |
 |------|-------------|
-| `.flogo` | TIBCO Flogo Enterprise application |
-| `.bwp` / `.xml` | TIBCO BusinessWorks 6 / BWCE process |
+| `.flogo` | Flogo Enterprise application |
+| `.bwp` / `.xml` | BusinessWorks 6 / BWCE process |
 | `.log` / `.txt` | Pod or application log |
 | `.zip` | Project archive containing multiple `.flogo` and `.bwp` files |
 
 ---
 
-> **Tip:** After uploading a file, TARA will immediately analyze it and generate downloadable reports in MD, HTML, and PDF formats. You can then ask specific questions about the findings.
+> **Tip:** After uploading a file, AgentForge will immediately analyze it and generate downloadable reports in MD, HTML, and PDF formats. You can then ask specific questions about the findings.

@@ -1,5 +1,5 @@
 """
-TARA — TIBCO AI Review Agent — Chainlit UI
+AgentForge — Chainlit UI
 
 Run with:
     chainlit run chainlit_app.py
@@ -38,15 +38,15 @@ _MAX_UPLOAD_MB     = 50    # reject individual file uploads larger than this
 def auth_callback(username: str, password: str) -> Optional[cl.User]:
     """
     Password auth — only enforced when CHAINLIT_AUTH_SECRET is set in the environment.
-    Configure credentials via TARA_USERNAME / TARA_PASSWORD env vars (defaults: tara / tara).
+    Configure credentials via AGENT_USERNAME / AGENT_PASSWORD env vars (defaults: admin / admin).
     Leave CHAINLIT_AUTH_SECRET unset for local development (no login required).
     """
-    expected_user = os.getenv("TARA_USERNAME", "tara")
-    expected_pass = os.getenv("TARA_PASSWORD", "tara")
-    if os.getenv("CHAINLIT_AUTH_SECRET") and expected_user == "tara" and expected_pass == "tara":
+    expected_user = os.getenv("AGENT_USERNAME", "admin")
+    expected_pass = os.getenv("AGENT_PASSWORD", "admin")
+    if os.getenv("CHAINLIT_AUTH_SECRET") and expected_user == "admin" and expected_pass == "admin":
         log.warning(
-            "CHAINLIT_AUTH_SECRET is set but default credentials (tara/tara) are in use — "
-            "set TARA_USERNAME and TARA_PASSWORD for production deployments."
+            "CHAINLIT_AUTH_SECRET is set but default credentials (admin/admin) are in use — "
+            "set AGENT_USERNAME and AGENT_PASSWORD for production deployments."
         )
     if username == expected_user and password == expected_pass:
         return cl.User(identifier=username, metadata={"role": "admin"})

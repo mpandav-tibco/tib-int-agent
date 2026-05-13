@@ -18,15 +18,34 @@ _lock = threading.Lock()
 
 def _open_client(url: str):
     import weaviate
+    from tibco_agent.config import settings
     bare = url.removeprefix("https://").removeprefix("http://")
     host, _, port_str = bare.partition(":")
     port = int(port_str) if port_str.isdigit() else 8080
+    grpc_port = settings.weaviate_grpc_port
+    # grpc_port == 0 means gRPC is unavailable; use HTTP-only connection
+    if grpc_port == 0:
+        return weaviate.connect_to_custom(
+            http_host=host or "localhost",
+            http_port=port,
+            http_secure=url.startswith("https://"),
+            grpc_host=host or "localhost",
+            grpc_port=50051,
+            grpc_secure=False,
+            skip_init_checks=True,
+            additional_config=weaviate.config.AdditionalConfig(
+                connection=weaviate.config.ConnectionConfig(
+                    session_pool_connections=0,
+                    session_pool_maxsize=0,
+                )
+            ) if hasattr(weaviate, "config") else None,
+        )
     return weaviate.connect_to_custom(
         http_host=host or "localhost",
         http_port=port,
         http_secure=url.startswith("https://"),
         grpc_host=host or "localhost",
-        grpc_port=50051,
+        grpc_port=grpc_port,
         grpc_secure=False,
     )
 
@@ -73,21 +92,41 @@ class WeaviateAdapter(VectorStoreAdapter):
                 client.collections.create(name=collection_name, properties=_PROPS)
                 log.info("Created Weaviate collection '%s'.", collection_name)
 
-            collection = client.collections.get(collection_name)
-            with collection.batch.dynamic() as batch:
-                for c in chunks:
-                    batch.add_object(
-                        properties={
-                            "text":        c["text"],
-                            "file_name":   c.get("file_name", ""),
-                            "source_type": c.get("source_type", ""),
-                            "product":     c.get("product", ""),
-                            "doc_id":      c.get("doc_id", ""),
-                            "section":     c.get("section", ""),
-                        },
-                        vector=c["vector"],
-                    )
-                    stored += 1
+            # Use REST batch API directly to avoid gRPC requirement
+            import requests as _req
+            batch_url = self._url.rstrip("/") + "/v1/batch/objects"
+            api_key = getattr(self, "_api_key", "") or ""
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            batch_size = 100
+            stored = 0
+            for i in range(0, len(chunks), batch_size):
+                batch = chunks[i : i + batch_size]
+                payload = {
+                    "objects": [
+                        {
+                            "class": collection_name,
+                            "properties": {
+                                "text":        c["text"],
+                                "file_name":   c.get("file_name", ""),
+                                "source_type": c.get("source_type", ""),
+                                "product":     c.get("product", ""),
+                                "doc_id":      c.get("doc_id", ""),
+                                "section":     c.get("section", ""),
+                            },
+                            "vector": c["vector"],
+                        }
+                        for c in batch
+                    ]
+                }
+                resp = _req.post(batch_url, json=payload, headers=headers, timeout=60)
+                resp.raise_for_status()
+                results = resp.json()
+                errors = [r for r in results if r.get("result", {}).get("status") == "FAILED"]
+                if errors:
+                    log.warning("Weaviate batch insert errors: %s", errors)
+                stored += len(batch) - len(errors)
         log.info("Weaviate: stored %d chunks in '%s'.", stored, collection_name)
         return stored
 

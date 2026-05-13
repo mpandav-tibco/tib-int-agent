@@ -49,7 +49,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # ── TARA / Chainlit chat UI ──────────────────────────────────────────────────
+  # ── AgentForge / Chainlit chat UI ───────────────────────────────────────────
   chainlit:
     build: .
     ports:
@@ -65,8 +65,8 @@ services:
       COLLECTION_NAME: ${COLLECTION_NAME:-TibcoKnowledge}
       REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-180}
       CHAINLIT_AUTH_SECRET: ${CHAINLIT_AUTH_SECRET:-}
-      TARA_USERNAME: ${TARA_USERNAME:-tara}
-      TARA_PASSWORD: ${TARA_PASSWORD:-tara}
+      AGENT_USERNAME: ${AGENT_USERNAME:-admin}
+      AGENT_PASSWORD: ${AGENT_PASSWORD:-admin}
       AGENT_ID: ${AGENT_ID:-}
     volumes:
       - ./data:/app/data
